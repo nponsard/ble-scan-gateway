@@ -19,7 +19,7 @@ use reqwless::{
 
 const MAX_SEEN: usize = 128;
 const SHARED_MEMORY_SIZE: usize = MAX_SEEN * 6;
-const SHARED_MEMORY_START: usize = 20100000 - SHARED_MEMORY_SIZE;
+const SHARED_MEMORY_START: usize = 0x20080000 - SHARED_MEMORY_SIZE;
 
 const TCP_BUFFER_SIZE: usize = 1024;
 const HTTP_BUFFER_SIZE: usize = 1024;
@@ -39,20 +39,41 @@ async fn main() {
 
     let mut client = HttpClient::new(&tcp_client, &dns_client);
 
+    let spu = embassy_nrf::pac::SPU;
+    for i in 0..64 {
+        spu.ramregion(i as usize).perm().write(|w| {
+            w.set_execute(true);
+            w.set_write(true);
+            w.set_read(true);
+            w.set_secattr(false);
+            w.set_lock(false);
+        })
+    }
+
+    info!("Starting BLE Scan Reporter Demo...");
     // start the network core
     embassy_nrf::reset::release_network_core();
 
+    info!("Waiting for network configuration to be up...");
     stack.wait_config_up().await;
 
     loop {
-        Timer::after_secs(30).await;
+        info!("loop");
+        Timer::after_secs(5).await;
+
+        info!("reading shared memory...");
 
         let body = {
             let seen_ptr = SHARED_MEMORY_START as *const u8;
             unsafe { core::slice::from_raw_parts(seen_ptr, SHARED_MEMORY_SIZE) }
         };
 
-        if let Err(err) = send_http_post_request(&mut client, ENDPOINT_URL, body).await {
+        info!(
+            "Sending HTTP POST request to {} with body: {:?}",
+            ENDPOINT_URL, body
+        );
+
+        if let Err(err) = send_http_post_request(&mut client, ENDPOINT_URL, b"test").await {
             error!(
                 "Error while sending an HTTP request: {:?}",
                 defmt::Debug2Format(&err)

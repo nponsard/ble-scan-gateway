@@ -20,7 +20,7 @@ use ariel_os::{
 
 const MAX_SEEN: usize = 128;
 const SHARED_MEMORY_SIZE: usize = MAX_SEEN * 6;
-const SHARED_MEMORY_START: usize = 20100000 - SHARED_MEMORY_SIZE;
+const SHARED_MEMORY_START: usize = 0x20080000 - SHARED_MEMORY_SIZE;
 
 static SEEN: Mutex<FnvIndexMap<BdAddr, Instant, MAX_SEEN>> = Mutex::new(FnvIndexMap::new());
 
