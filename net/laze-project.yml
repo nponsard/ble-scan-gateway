@@ -1,0 +1,12 @@
+imports:
+  - git:
+      url: https://github.com/ariel-os/ariel-os
+      branch: main
+    dldir: ariel-os
+
+apps:
+  - name: ble-scan-reporter-demo
+    context:
+      - nrf5340dk-net
+    selects:
+      - ble-central

@@ -6,8 +6,8 @@ imports:
 
 apps:
   - name: ble-scan-reporter-demo
+    context:
+      - nrf5340dk
     selects:
-      - ble-central
+      - network-config-static
       - network
-      - random
-      - alloc
