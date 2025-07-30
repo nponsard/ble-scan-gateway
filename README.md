@@ -4,6 +4,26 @@ This repository is a poof of concept showing how we can report the presence of B
 
 This version is using the nRF5340dk, tested with the Thingy91X development kit.
 
+## Architecture
+
+### Network core
+
+The network core on the nRF5340 has a limited set of features and is dedicated here to the BLE communication.
+
+The network core scans for BLE devices and keeps track of the last time they have been detected. A task is running to clear the records of scanned devices older than 10 minute.
+
+Another task is then copying the current list of scanned devices to the memory of the application core as a list bytes corresponding of the MAC addresses chained together, with 6 bytes per address and a length of 128 addresses.
+
+### Application core
+
+The application core of the nRF5340 is more powerful than the Network core. It handles the ethernet over USB communication and is responsible for starting ("releasing") the network core.
+
+A task runs on the application core to read the memory region where the network core wrote the list of addresses and sends them via HTTP using the USB ethernet connection to the host PC. The  POST request is sent to the IP 10.42.0.1, port 3000 and path `/mac`, the body is the raw content of this memory region.
+
+### The server
+
+The server is run on the host PC and listens on all interfaces (for convenience) on port 3000, once it receives a POST request on `/mac`, the body of the request is read and split by chuncks of 6, each chunk corresponds to one MAC address that can then be printed in the console.
+
 ## Setup
 
 ### Flashing
@@ -38,7 +58,7 @@ laze build -b nrf5340dk run
 
 Connect the USB port of the nRF5340 to your computer, on the Thingy91X it's the USB-C port (J6). Your computer should detect a new network interface. You can list them using `ip a`:
 
-```
+```log
 $ ip a
 1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
