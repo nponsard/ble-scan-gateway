@@ -1,8 +1,8 @@
-# Bluetooth reporter demo
+# BLE scan gateway
 
 This repository is a poof of concept showing how we can report the presence of BLE tags in the proximity of a MCU.
 
-This version is using the nRF5340dk, tested with the Thingy91X development kit.
+This version is using the nRF5340, tested with the Thingy91X development kit.
 
 ## Architecture
 
