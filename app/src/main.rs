@@ -30,6 +30,7 @@ const ENDPOINT_URL: &str = "http://10.42.0.1:3000/mac";
 
 #[ariel_os::task(autostart)]
 async fn main() {
+    embassy_nrf::reset::hold_network_core();
     let stack = net::network_stack().await.unwrap();
 
     let tcp_client_state =
@@ -73,7 +74,7 @@ async fn main() {
             ENDPOINT_URL, body
         );
 
-        if let Err(err) = send_http_post_request(&mut client, ENDPOINT_URL, b"test").await {
+        if let Err(err) = send_http_post_request(&mut client, ENDPOINT_URL, body).await {
             error!(
                 "Error while sending an HTTP request: {:?}",
                 defmt::Debug2Format(&err)

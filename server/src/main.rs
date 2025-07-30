@@ -27,9 +27,35 @@ async fn root() -> &'static str {
 }
 
 async fn receive_mac(body: Bytes) -> (StatusCode, String) {
-    println!("Received MAC: ");
-    for byte in body.iter() {
-        print!("{byte:02x} ");
+    // Split the body into chunks of 6 bytes
+
+    if body.len() % 6 != 0 {
+        return (StatusCode::BAD_REQUEST, "Invalid MAC length".to_string());
+    }
+
+    let chuncked = body.chunks(6);
+
+    println!("Received report: {}", body.len());
+    for chunk in chuncked {
+        let mut empty = true;
+        for byte in chunk {
+            if *byte != 0u8 {
+                empty = false;
+                break;
+            }
+        }
+
+        if empty {
+            continue;
+        }
+        let mut chunk = chunk.to_vec();
+        chunk.reverse();
+
+        print!("MAC: ");
+        for byte in chunk {
+            print!("{byte:02x} ");
+        }
+        println!();
     }
     println!();
     (StatusCode::OK, "Ok".to_string())

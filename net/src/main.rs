@@ -40,10 +40,13 @@ async fn automatic_cleanup() {
 async fn update_shared_memory() {
     loop {
         Timer::after_secs(30).await;
+        info!("updating shared memory");
         // Remove entries older than 10 minutes
         let seen = { SEEN.lock().clone() };
+        info!("getting pointer");
         let seen_raw = unsafe { &mut *(SHARED_MEMORY_START as *mut [u8; SHARED_MEMORY_SIZE]) };
-
+        seen_raw.fill(0); // Clear the shared memory
+        info!("writing to shared memory");
         let mut index = 0;
         for (addr, _) in seen.iter() {
             if index >= SHARED_MEMORY_SIZE {
