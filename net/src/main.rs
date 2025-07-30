@@ -120,8 +120,9 @@ impl EventHandler for DiscorveryHandler {
                         remove_oldest_entry(&mut seen);
                     }
                 }
-                seen.insert(report.addr, Instant::now()).unwrap();
             }
+            // Update / insert the address with the current time
+            let _ = seen.insert(report.addr, Instant::now());
         }
     }
 }
