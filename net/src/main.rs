@@ -1,10 +1,14 @@
 #![no_main]
 #![no_std]
 
-//! Adapted from the example in `trouble_host`
+mod pins;
 
 use embassy_futures::join::join;
 use heapless::FnvIndexMap;
+use postcard::{
+    ser_flavors::{Cobs, Slice},
+    serialize_with_flavor,
+};
 use trouble_host::{
     Host,
     connection::{PhySet, ScanConfig},
@@ -18,11 +22,16 @@ use ariel_os::{
     time::{Duration, Instant, Timer},
 };
 
-const MAX_SEEN: usize = 128;
-const SHARED_MEMORY_SIZE: usize = MAX_SEEN * 6;
-const SHARED_MEMORY_START: usize = 0x20080000 - SHARED_MEMORY_SIZE;
+use common_types::{AddressesSeen, MAX_SEEN};
+
+use embassy_nrf::peripherals::SERIAL0;
+use embassy_nrf::{bind_interrupts, uarte};
 
 static SEEN: Mutex<FnvIndexMap<BdAddr, Instant, MAX_SEEN>> = Mutex::new(FnvIndexMap::new());
+
+bind_interrupts!(struct Irqs {
+    SERIAL0 => uarte::InterruptHandler<SERIAL0>;
+});
 
 #[ariel_os::task(autostart)]
 async fn automatic_cleanup() {
@@ -36,26 +45,46 @@ async fn automatic_cleanup() {
     }
 }
 
-#[ariel_os::task(autostart)]
-async fn update_shared_memory() {
+#[ariel_os::task(autostart, peripherals)]
+async fn send_scan_data(peripherals: pins::Peripherals) {
+    let mut config = uarte::Config::default();
+    config.parity = uarte::Parity::EXCLUDED;
+    config.baudrate = uarte::Baudrate::BAUD115200;
+
+    let mut uart = uarte::Uarte::new(
+        peripherals.serial,
+        Irqs,
+        peripherals.uart_rx,
+        peripherals.uart_tx,
+        config,
+    );
     loop {
         Timer::after_secs(30).await;
-        info!("updating shared memory");
+        info!("Sending scan data...");
         // Remove entries older than 10 minutes
-        let seen = { SEEN.lock().clone() };
-        info!("getting pointer");
-        let seen_raw = unsafe { &mut *(SHARED_MEMORY_START as *mut [u8; SHARED_MEMORY_SIZE]) };
-        seen_raw.fill(0); // Clear the shared memory
-        info!("writing to shared memory");
-        let mut index = 0;
-        for (addr, _) in seen.iter() {
-            if index >= SHARED_MEMORY_SIZE {
-                break;
-            }
-            // Store the address in the shared memory
-            for byte in addr.raw() {
-                seen_raw[index] = *byte;
-                index += 1;
+        let seen = {
+            let mut seen = SEEN.lock();
+            let v: heapless::Vec<BdAddr, MAX_SEEN> = seen.keys().cloned().collect();
+            seen.clear();
+            v
+        };
+        let buffer = &mut [0u8; 32];
+        let data = serialize_with_flavor::<AddressesSeen, Cobs<Slice>, &mut [u8]>(
+            &AddressesSeen::from(seen),
+            Cobs::try_new(Slice::new(buffer)).unwrap(),
+        );
+
+        match data {
+            Ok(slice) => match uart.write(slice).await {
+                Ok(_) => {
+                    info!("Sent {} bytes", slice.len());
+                }
+                Err(e) => {
+                    warn!("Failed to send data over UART: {:?}", e);
+                }
+            },
+            Err(e) => {
+                warn!("Failed to serialize data: {}", e);
             }
         }
     }
