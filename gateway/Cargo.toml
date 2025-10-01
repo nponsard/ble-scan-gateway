@@ -1,0 +1,33 @@
+[package]
+name = "ble-scan-reporter-demo-gateway"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ariel-os = { path = "build/imports/ariel-os/src/ariel-os", features = [
+  "tcp",
+  "mdns",
+  "dns",
+  "time",
+  "uart",
+  "sensors",
+] }
+ariel-os-boards = { path = "build/imports/ariel-os/src/ariel-os-boards" }
+ariel-os-nrf91-gnss = { path = "build/imports/ariel-os/src/ariel-os-nrf91-gnss", features = [
+  "defmt",
+] }
+embassy-futures = { version = "0.1.1" }
+heapless = "0.8"
+reqwless = { version = "0.13.0", default-features = true, features = [
+  "embedded-tls",
+] }
+rand_core = "0.6.4"
+serde_json = { version = "1.0.145", default-features = false, features = ["alloc"] }
+common-types = { path = "../common-types" }
+linkme = { version = "0.3.32" }
+
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(context, values(any()))',
+] }
