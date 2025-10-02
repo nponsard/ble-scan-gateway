@@ -1,9 +1,9 @@
 use axum::{
-    Json, Router,
-    body::{self, Bytes},
+    Router, extract,
     http::StatusCode,
     routing::{get, post},
 };
+use common_types::GatewayUpdate;
 
 #[tokio::main]
 async fn main() {
@@ -26,37 +26,25 @@ async fn root() -> &'static str {
     "Hello, World!"
 }
 
-async fn receive_mac(body: Bytes) -> (StatusCode, String) {
-    // Split the body into chunks of 6 bytes
+async fn receive_mac(extract::Json(payload): extract::Json<GatewayUpdate>) -> (StatusCode, String) {
+    println!("Received update");
+    println!(
+        "Time of fix: {:?}",
+        payload.location.map(|loc| loc.timestamp)
+    );
+    println!(
+        "Position: {:?}",
+        payload.location.map(|loc| (loc.latitude, loc.longitude))
+    );
+    println!("Altitude: {:?}", payload.location.map(|loc| loc.altitude));
+    println!("Number of MAC addresses: {}", payload.seen.len());
 
-    if body.len() % 6 != 0 {
-        return (StatusCode::BAD_REQUEST, "Invalid MAC length".to_string());
-    }
-
-    let chuncked = body.chunks(6);
-
-    println!("Received report: {}", body.len());
-    for chunk in chuncked {
-        let mut empty = true;
-        for byte in chunk {
-            if *byte != 0u8 {
-                empty = false;
-                break;
-            }
-        }
-
-        if empty {
-            continue;
-        }
-        let mut chunk = chunk.to_vec();
-        chunk.reverse();
-
-        print!("MAC: ");
-        for byte in chunk {
-            print!("{byte:02x} ");
+    for seen in &payload.seen {
+        for byte in seen {
+            print!("{:02X}:", byte);
         }
         println!();
     }
-    println!();
+
     (StatusCode::OK, "Ok".to_string())
 }

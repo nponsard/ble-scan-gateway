@@ -1,12 +1,18 @@
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(not(feature = "std"))]
 use heapless::Vec;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "std")]
+use std::vec::Vec;
 
 pub const MAX_SEEN: usize = 128;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AddressesSeen {
+    #[cfg(feature = "std")]
+    pub addrs: Vec<[u8; 6]>,
+    #[cfg(not(feature = "std"))]
     pub addrs: Vec<[u8; 6], MAX_SEEN>,
 }
 
@@ -30,5 +36,8 @@ pub struct Location {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GatewayUpdate {
     pub location: Option<Location>,
+    #[cfg(feature = "std")]
+    pub seen: Vec<[u8; 6]>,
+    #[cfg(not(feature = "std"))]
     pub seen: Vec<[u8; 6], MAX_SEEN>,
 }

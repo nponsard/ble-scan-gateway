@@ -7,3 +7,5 @@ edition = "2024"
 serde = { version = "1.0" }
 axum = { version = "0.8" }
 tokio = { version = "1.0", features = ["full"] }
+serde_json = "1.0.145"
+common-types = { path = "../common-types", features = ["std"] }
