@@ -4,16 +4,20 @@ mod pins;
 mod sensors;
 
 use ariel_os::{
-    debug::log::{error, info},
+    debug::log::{error, info, warn},
     hal, net,
     reexports::embassy_net,
-    time::Timer,
+    thread::sync::Mutex,
+    time::{Duration, Instant, Timer},
     uart::Baud,
 };
+use common_types::{AddressesSeen, MAX_SEEN};
 use embassy_net::{
     dns::DnsSocket,
     tcp::client::{TcpClient, TcpClientState},
 };
+use embedded_io_async::Read as _;
+use heapless::{FnvIndexMap, Vec};
 use reqwless::{
     client::HttpClient,
     headers::ContentType,
@@ -22,6 +26,9 @@ use reqwless::{
 
 use crate::pins::Peripherals;
 
+type SeenMap = FnvIndexMap<[u8; 6], Instant, MAX_SEEN>;
+static SEEN: Mutex<SeenMap> = Mutex::new(FnvIndexMap::new());
+
 const MAX_CONCURRENT_CONNECTIONS: usize = 2;
 
 const ENDPOINT_URL: &str = "http://10.42.0.1:3000/mac";
@@ -29,8 +36,32 @@ const ENDPOINT_URL: &str = "http://10.42.0.1:3000/mac";
 const TCP_BUFFER_SIZE: usize = 1024;
 const HTTP_BUFFER_SIZE: usize = 1024;
 
+/// Remove entries older than 10 minutes
+fn remove_old_entries(seen: &mut SeenMap) {
+    let now = Instant::now();
+    seen.retain(|_, &mut instant| now.duration_since(instant) < Duration::from_secs(600));
+}
+
+fn remove_oldest_entry(seen: &mut SeenMap) {
+    if let Some((oldest_key, _)) = seen.iter().min_by_key(|&(_, &v)| v) {
+        seen.remove(&oldest_key.clone());
+    }
+}
+
+#[ariel_os::task(autostart)]
+async fn automatic_cleanup() {
+    loop {
+        Timer::after_secs(30).await;
+        // Remove entries older than 10 minutes
+        {
+            let mut seen = SEEN.lock();
+            remove_old_entries(&mut seen);
+        }
+    }
+}
+
 #[ariel_os::task(autostart, peripherals)]
-async fn main(peripherals: Peripherals) {
+async fn uart_receive(peripherals: Peripherals) {
     let stack = net::network_stack().await.unwrap();
 
     let tcp_client_state =
@@ -54,20 +85,40 @@ async fn main(peripherals: Peripherals) {
         config,
     );
 
+    let mut packet_buffer: Vec<u8, 2048> = Vec::new();
+    let mut uart_read_buf = [0u8; 64];
+
     loop {
+        let read = uart.read(&mut uart_read_buf).await.unwrap();
+        packet_buffer
+            .extend_from_slice(&uart_read_buf[..read])
+            .unwrap();
+        if let Some(separator) = packet_buffer.iter().position(|&b| b == 0x00) {
+            let instant = Instant::now();
+            let packet = &mut packet_buffer[..separator];
 
+            match postcard::from_bytes_cobs::<AddressesSeen>(packet) {
+                Ok(decoded) => {
+                    let mut seen = SEEN.lock();
+                    for addr in decoded.addrs {
+                        if seen.insert(addr, instant).is_err() {
+                            warn!("Seen list full, removing oldest entry to insert new one");
+                            remove_oldest_entry(&mut seen);
+                            if seen.insert(addr, instant).is_err() {
+                                error!("Failed to insert address after removing oldest entry");
+                            }
+                        };
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to decode packet: {:?}", e);
+                }
+            }
 
-        // read from UART
-        // add to the buffer
-        // search for 0x00 (COBS delimiter)
-        // if found, decode the packet
-        // save the data into the list of seen addresses
-        // trim the buffer until the delimiter (remove the processed packet)
-
-
-
-        info!("FIXME: Implement proper core sleep");
-        Timer::after_secs(100).await;
+            // Remove the read buffer
+            // should not panic as the size is smaller than the capacity of the vec.
+            packet_buffer = Vec::from_slice(packet_buffer.split_at(separator + 1).1).unwrap();
+        }
     }
 }
 
