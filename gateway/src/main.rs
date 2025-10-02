@@ -6,6 +6,7 @@ mod sensors;
 use ariel_os::{
     asynch::Spawner,
     debug::log::{error, info, warn},
+    gpio::{Input, Level, Output, Pull},
     hal, net,
     reexports::embassy_net,
     sensors::{Label, Reading, Sensor},
@@ -191,8 +192,10 @@ async fn update_location() {
     }
 }
 
-#[ariel_os::task(autostart)]
-async fn send_updates() {
+#[ariel_os::task(autostart, peripherals)]
+async fn send_updates(peripherals: Peripherals) {
+    let mut last_update = Instant::now();
+
     let stack = net::network_stack().await.unwrap();
 
     let tcp_client_state =
@@ -202,8 +205,19 @@ async fn send_updates() {
 
     let mut client = HttpClient::new(&tcp_client, &dns_client);
 
+    let mut btn1 = Input::builder(peripherals.btn1, Pull::Up)
+        .build_with_interrupt()
+        .unwrap();
+
     loop {
-        Timer::after_secs(60).await;
+        // Wait for the button being pressed or 60s, whichever comes first.
+        let _ = embassy_futures::select::select(btn1.wait_for_low(), Timer::after_nanos(60)).await;
+
+        // Prevent sending updates too frequently
+        if last_update.elapsed() < Duration::from_secs(10) {
+            warn!("Update skipped to avoid sending updates too frequently");
+            continue;
+        }
 
         let location = { *CURRENT_LOCATION.lock() };
 
@@ -229,6 +243,7 @@ async fn send_updates() {
                 );
             }
         }
+        last_update = Instant::now();
     }
 }
 

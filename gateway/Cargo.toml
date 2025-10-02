@@ -12,6 +12,7 @@ ariel-os = { path = "build/imports/ariel-os/src/ariel-os", features = [
   "uart",
   "sensors",
   "threading",
+  "external-interrupts",
 ] }
 ariel-os-boards = { path = "build/imports/ariel-os/src/ariel-os-boards" }
 ariel-os-nrf91-gnss = { path = "build/imports/ariel-os/src/ariel-os-nrf91-gnss", features = [

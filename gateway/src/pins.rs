@@ -7,4 +7,5 @@ pub type Vcom0Uart<'a> = uart::SERIAL3<'a>;
 ariel_os::hal::define_peripherals!(Peripherals {
     uart_tx: P0_00,
     uart_rx: P0_01,
+    btn1: P0_26
 });
