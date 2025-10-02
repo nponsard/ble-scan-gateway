@@ -4,14 +4,17 @@ mod pins;
 mod sensors;
 
 use ariel_os::{
+    asynch::Spawner,
     debug::log::{error, info, warn},
     hal, net,
     reexports::embassy_net,
+    sensors::{Label, Reading, Sensor},
     thread::sync::Mutex,
     time::{Duration, Instant, Timer},
     uart::Baud,
 };
-use common_types::{AddressesSeen, MAX_SEEN};
+use ariel_os_nrf91_gnss::Nrf91GnssExt;
+use common_types::{AddressesSeen, GatewayUpdate, Location, MAX_SEEN};
 use embassy_net::{
     dns::DnsSocket,
     tcp::client::{TcpClient, TcpClientState},
@@ -24,10 +27,12 @@ use reqwless::{
     request::{Method, RequestBuilder},
 };
 
-use crate::pins::Peripherals;
+use crate::{pins::Peripherals, sensors::NRF91_GNSS};
 
 type SeenMap = FnvIndexMap<[u8; 6], Instant, MAX_SEEN>;
 static SEEN: Mutex<SeenMap> = Mutex::new(FnvIndexMap::new());
+
+static CURRENT_LOCATION: Mutex<Option<Location>> = Mutex::new(None);
 
 const MAX_CONCURRENT_CONNECTIONS: usize = 2;
 
@@ -62,14 +67,6 @@ async fn automatic_cleanup() {
 
 #[ariel_os::task(autostart, peripherals)]
 async fn uart_receive(peripherals: Peripherals) {
-    let stack = net::network_stack().await.unwrap();
-
-    let tcp_client_state =
-        TcpClientState::<MAX_CONCURRENT_CONNECTIONS, TCP_BUFFER_SIZE, TCP_BUFFER_SIZE>::new();
-    let tcp_client = TcpClient::new(stack, &tcp_client_state);
-    let dns_client = DnsSocket::new(stack);
-
-    let mut client = HttpClient::new(&tcp_client, &dns_client);
     let mut config = hal::uart::Config::default();
     config.baudrate = Baud::_115200;
     info!("Selected configuration: {}", config);
@@ -118,6 +115,119 @@ async fn uart_receive(peripherals: Peripherals) {
             // Remove the read buffer
             // should not panic as the size is smaller than the capacity of the vec.
             packet_buffer = Vec::from_slice(packet_buffer.split_at(separator + 1).1).unwrap();
+        }
+    }
+}
+
+#[ariel_os::task(autostart)]
+async fn update_location() {
+    let spawner = Spawner::for_current_executor().await;
+
+    sensors::NRF91_GNSS
+        .init(ariel_os_nrf91_gnss::config::Config::default())
+        .await;
+    spawner.spawn(sensors::nrf91_gnss_runner()).unwrap();
+
+    loop {
+        if let Err(e) = sensors::NRF91_GNSS.trigger_measurement() {
+            warn!("Failed to trigger GNSS measurement: {:?}", e);
+        }
+        let reading = sensors::NRF91_GNSS.wait_for_reading().await;
+
+        if let Ok(samples) = reading {
+            let mut location = Location {
+                altitude: 0.0,
+                latitude: 0.0,
+                longitude: 0.0,
+                timestamp: 0,
+            };
+            let mut found_altitude = false;
+            let mut found_latitude = false;
+            let mut found_longitude = false;
+
+            let found_timestamp = match samples.time_of_fix() {
+                Ok(t) => {
+                    location.timestamp = t as u64;
+                    true
+                }
+                Err(e) => {
+                    warn!("Failed to get time of fix: {:?}", e);
+                    false
+                }
+            };
+
+            for (sample, channel) in samples.samples().zip(NRF91_GNSS.reading_channels().iter()) {
+                match channel.label() {
+                    Label::Altitude => {
+                        if let Ok(value) = sample.value() {
+                            location.altitude =
+                                value as f32 / 10i32.pow((-channel.scaling()) as u32) as f32;
+                            found_altitude = true;
+                        }
+                    }
+                    Label::Latitude => {
+                        if let Ok(value) = sample.value() {
+                            location.latitude =
+                                value as f32 / 10i32.pow((-channel.scaling()) as u32) as f32;
+                            found_latitude = true;
+                        }
+                    }
+                    Label::Longitude => {
+                        if let Ok(value) = sample.value() {
+                            location.longitude =
+                                value as f32 / 10i32.pow((-channel.scaling()) as u32) as f32;
+                            found_longitude = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if found_altitude && found_latitude && found_longitude && found_timestamp {
+                let mut loc_lock = CURRENT_LOCATION.lock();
+                *loc_lock = Some(location);
+            }
+        }
+    }
+}
+
+#[ariel_os::task(autostart)]
+async fn send_updates() {
+    let stack = net::network_stack().await.unwrap();
+
+    let tcp_client_state =
+        TcpClientState::<MAX_CONCURRENT_CONNECTIONS, TCP_BUFFER_SIZE, TCP_BUFFER_SIZE>::new();
+    let tcp_client = TcpClient::new(stack, &tcp_client_state);
+    let dns_client = DnsSocket::new(stack);
+
+    let mut client = HttpClient::new(&tcp_client, &dns_client);
+
+    loop {
+        Timer::after_secs(60).await;
+
+        let location = { *CURRENT_LOCATION.lock() };
+
+        let seen_snapshot = { SEEN.lock().keys().cloned().collect() };
+
+        let update = GatewayUpdate {
+            location,
+            seen: seen_snapshot,
+        };
+        match serde_json::to_vec(&update) {
+            Ok(json) => {
+                if let Err(e) = send_http_post_request(&mut client, ENDPOINT_URL, &json).await {
+                    warn!(
+                        "Failed to send HTTP POST request: {:?}",
+                        defmt::Debug2Format(&e)
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to serialize update to JSON: {:?}",
+                    defmt::Debug2Format(&e)
+                );
+            }
         }
     }
 }
