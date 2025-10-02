@@ -56,7 +56,7 @@ name = "common-types"
 version = "0.1.0"
 dependencies = [
  "bt-hci",
- "heapless 0.9.1",
+ "heapless 0.8.0",
  "postcard",
  "serde",
 ]
@@ -173,16 +173,6 @@ name = "heapless"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
-dependencies = [
- "hash32 0.3.1",
- "stable_deref_trait",
-]
-
-[[package]]
-name = "heapless"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1edcd5a338e64688fbdcb7531a846cfd3476a54784dcb918a0844682bc7ada5"
 dependencies = [
  "hash32 0.3.1",
  "serde",
