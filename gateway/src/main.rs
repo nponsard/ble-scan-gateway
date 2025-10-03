@@ -5,12 +5,11 @@ mod sensors;
 
 use ariel_os::{
     asynch::Spawner,
-    debug::log::{error, info, warn},
+    debug::log::{debug, error, info, warn},
     gpio::{Input, Level, Output, Pull},
     hal, net,
     reexports::embassy_net,
     sensors::{Label, Reading, Sensor},
-    thread::sync::Mutex,
     time::{Duration, Instant, Timer},
     uart::Baud,
 };
@@ -28,16 +27,18 @@ use reqwless::{
     request::{Method, RequestBuilder},
 };
 
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
+
 use crate::{pins::Peripherals, sensors::NRF91_GNSS};
 
 type SeenMap = FnvIndexMap<[u8; 6], Instant, MAX_SEEN>;
-static SEEN: Mutex<SeenMap> = Mutex::new(FnvIndexMap::new());
+static SEEN: Mutex<CriticalSectionRawMutex, SeenMap> = Mutex::new(FnvIndexMap::new());
 
-static CURRENT_LOCATION: Mutex<Option<Location>> = Mutex::new(None);
+static CURRENT_LOCATION: Mutex<CriticalSectionRawMutex, Option<Location>> = Mutex::new(None);
 
 const MAX_CONCURRENT_CONNECTIONS: usize = 2;
 
-const ENDPOINT_URL: &str = "http://10.42.0.1:3000/mac";
+const ENDPOINT_URL: &str = "http://83.202.186.173:4230/mac";
 
 const TCP_BUFFER_SIZE: usize = 1024;
 const HTTP_BUFFER_SIZE: usize = 1024;
@@ -60,7 +61,9 @@ async fn automatic_cleanup() {
         Timer::after_secs(30).await;
         // Remove entries older than 10 minutes
         {
-            let mut seen = SEEN.lock();
+            debug!("Cleaning up old entries in seen list");
+            let mut seen = SEEN.lock().await;
+            debug!("locked");
             remove_old_entries(&mut seen);
         }
     }
@@ -87,6 +90,7 @@ async fn uart_receive(peripherals: Peripherals) {
     let mut uart_read_buf = [0u8; 64];
 
     loop {
+        debug!("Waiting for UART data...");
         let read = uart.read(&mut uart_read_buf).await.unwrap();
         packet_buffer
             .extend_from_slice(&uart_read_buf[..read])
@@ -94,10 +98,12 @@ async fn uart_receive(peripherals: Peripherals) {
         if let Some(separator) = packet_buffer.iter().position(|&b| b == 0x00) {
             let instant = Instant::now();
             let packet = &mut packet_buffer[..separator];
+            debug!("Received packet, trying to decode...");
 
             match postcard::from_bytes_cobs::<AddressesSeen>(packet) {
                 Ok(decoded) => {
-                    let mut seen = SEEN.lock();
+                    debug!("Decoded packet");
+                    let mut seen = SEEN.lock().await;
                     for addr in decoded.addrs {
                         if seen.insert(addr, instant).is_err() {
                             warn!("Seen list full, removing oldest entry to insert new one");
@@ -134,6 +140,8 @@ async fn update_location() {
             warn!("Failed to trigger GNSS measurement: {:?}", e);
         }
         let reading = sensors::NRF91_GNSS.wait_for_reading().await;
+
+        debug!("Got GNSS reading: {:?}", defmt::Debug2Format(&reading));
 
         if let Ok(samples) = reading {
             let mut location = Location {
@@ -185,15 +193,16 @@ async fn update_location() {
             }
 
             if found_altitude && found_latitude && found_longitude && found_timestamp {
-                let mut loc_lock = CURRENT_LOCATION.lock();
+                debug!("updating location");
+                let mut loc_lock = CURRENT_LOCATION.lock().await;
                 *loc_lock = Some(location);
             }
         }
     }
 }
 
-#[ariel_os::task(autostart, peripherals)]
-async fn send_updates(peripherals: Peripherals) {
+#[ariel_os::task(autostart)]
+async fn send_updates() {
     let mut last_update = Instant::now();
 
     let stack = net::network_stack().await.unwrap();
@@ -205,23 +214,25 @@ async fn send_updates(peripherals: Peripherals) {
 
     let mut client = HttpClient::new(&tcp_client, &dns_client);
 
-    let mut btn1 = Input::builder(peripherals.btn1, Pull::Up)
-        .build_with_interrupt()
-        .unwrap();
+    // let mut btn1 = Input::builder(peripherals.btn1, Pull::Up)
+    //     .build_with_interrupt()
+    //     .unwrap();
 
     loop {
         // Wait for the button being pressed or 60s, whichever comes first.
-        let _ = embassy_futures::select::select(btn1.wait_for_low(), Timer::after_nanos(60)).await;
-
+        // let _ = embassy_futures::select::select(btn1.wait_for_low(), Timer::after_nanos(60)).await;
+        info!("Waiting 60s before sending next update...");
+        Timer::after_secs(60).await;
         // Prevent sending updates too frequently
         if last_update.elapsed() < Duration::from_secs(10) {
             warn!("Update skipped to avoid sending updates too frequently");
             continue;
         }
 
-        let location = { *CURRENT_LOCATION.lock() };
-
-        let seen_snapshot = { SEEN.lock().keys().cloned().collect() };
+        info!("Sending update...");
+        let location = { *CURRENT_LOCATION.lock().await };
+        debug!("Getting seen list");
+        let seen_snapshot = { SEEN.lock().await.keys().cloned().collect() };
 
         let update = GatewayUpdate {
             location,
