@@ -11,7 +11,6 @@ use ariel_os::{
     reexports::embassy_net,
     sensors::{Label, Reading, Sensor},
     time::{Duration, Instant, Timer},
-    uart::Baud,
 };
 use ariel_os_nrf91_gnss::Nrf91GnssExt;
 use common_types::{AddressesSeen, GatewayUpdate, Location, MAX_SEEN};
@@ -19,6 +18,8 @@ use embassy_net::{
     dns::DnsSocket,
     tcp::client::{TcpClient, TcpClientState},
 };
+use embassy_nrf::peripherals::SERIAL3;
+use embassy_nrf::{bind_interrupts, uarte};
 use embedded_io_async::Read as _;
 use heapless::{FnvIndexMap, Vec};
 use reqwless::{
@@ -26,6 +27,10 @@ use reqwless::{
     headers::ContentType,
     request::{Method, RequestBuilder},
 };
+
+bind_interrupts!(struct Irqs {
+    SERIAL3 => uarte::InterruptHandler<SERIAL3>;
+});
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 
@@ -55,7 +60,7 @@ fn remove_oldest_entry(seen: &mut SeenMap) {
     }
 }
 
-#[ariel_os::task(autostart)]
+// #[ariel_os::task(autostart)]
 async fn automatic_cleanup() {
     loop {
         Timer::after_secs(30).await;
@@ -71,30 +76,30 @@ async fn automatic_cleanup() {
 
 #[ariel_os::task(autostart, peripherals)]
 async fn uart_receive(peripherals: Peripherals) {
-    let mut config = hal::uart::Config::default();
-    config.baudrate = Baud::_115200;
-    info!("Selected configuration: {}", config);
+    let mut config = uarte::Config::default();
+    config.parity = uarte::Parity::EXCLUDED;
+    config.baudrate = uarte::Baudrate::BAUD115200;
 
-    let mut rx_buf = [0u8; 32];
-    let mut tx_buf = [0u8; 32];
-
-    let mut uart = pins::Vcom0Uart::new(
-        peripherals.uart_rx,
+    let mut uart = uarte::Uarte::new(
+        peripherals.serial,
+        Irqs,
         peripherals.uart_tx,
-        &mut rx_buf,
-        &mut tx_buf,
+        peripherals.uart_rx,
         config,
     );
-
     let mut packet_buffer: Vec<u8, 2048> = Vec::new();
-    let mut uart_read_buf = [0u8; 64];
+    let mut uart_read_buf = [0u8; 2048];
 
     loop {
         debug!("Waiting for UART data...");
-        let read = uart.read(&mut uart_read_buf).await.unwrap();
-        packet_buffer
-            .extend_from_slice(&uart_read_buf[..read])
-            .unwrap();
+        let result = uart.read(&mut uart_read_buf).await;
+        if let Err(e) = result {
+            error!("UART read error: {:?}", e);
+            continue;
+        }
+
+        debug!("Read 64 bytes from UART");
+        packet_buffer.extend_from_slice(&uart_read_buf).unwrap();
         if let Some(separator) = packet_buffer.iter().position(|&b| b == 0x00) {
             let instant = Instant::now();
             let packet = &mut packet_buffer[..separator];
@@ -126,7 +131,7 @@ async fn uart_receive(peripherals: Peripherals) {
     }
 }
 
-#[ariel_os::task(autostart)]
+// #[ariel_os::task(autostart)]
 async fn update_location() {
     let spawner = Spawner::for_current_executor().await;
 
@@ -201,7 +206,7 @@ async fn update_location() {
     }
 }
 
-#[ariel_os::task(autostart)]
+// #[ariel_os::task(autostart)]
 async fn send_updates() {
     let mut last_update = Instant::now();
 

@@ -30,6 +30,8 @@ use common_types::{AddressesSeen, MAX_SEEN};
 use embassy_nrf::peripherals::SERIAL0;
 #[cfg(context = "nrf52dk")]
 use embassy_nrf::peripherals::UARTE0;
+#[cfg(context = "nrf52840dk")]
+use embassy_nrf::peripherals::UARTE0;
 use embassy_nrf::{bind_interrupts, uarte};
 
 static SEEN: Mutex<FnvIndexMap<BdAddr, Instant, MAX_SEEN>> = Mutex::new(FnvIndexMap::new());
@@ -40,6 +42,11 @@ bind_interrupts!(struct Irqs {
 });
 
 #[cfg(context = "nrf52dk")]
+bind_interrupts!(struct Irqs {
+    UARTE0 => uarte::InterruptHandler<UARTE0>;
+});
+
+#[cfg(context = "nrf52840dk")]
 bind_interrupts!(struct Irqs {
     UARTE0 => uarte::InterruptHandler<UARTE0>;
 });
@@ -69,6 +76,20 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
         peripherals.uart_tx,
         config,
     );
+
+    // let mut buf = [0; 8];
+    // buf.copy_from_slice(b"Hello!\r\n");
+
+    // uart.write(&buf).await.unwrap();
+    // info!("wrote hello in uart!");
+
+    // loop {
+    //     // info!("reading...");
+    //     // uart.read(&mut buf).await.unwrap();
+    //     info!("writing...");
+    //     uart.write(&buf).await.unwrap();
+    // }
+
     loop {
         Timer::after_secs(2).await;
         info!("Sending scan data...");

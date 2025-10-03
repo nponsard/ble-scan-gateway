@@ -7,8 +7,7 @@ imports:
 apps:
   - name: ble-scan-reporter-demo
     context:
-      - nrf5340dk-net
-      - nrf52dk
       - nrf52840dk
-    selects:
-      - ble-central
+      - nrf52dk
+      - nordic-thingy-91-x-nrf9151
+
