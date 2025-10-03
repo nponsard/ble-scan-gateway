@@ -22,15 +22,26 @@ use ariel_os::{
     time::{Duration, Instant, Timer},
 };
 
+use embedded_io_async::Write;
+
 use common_types::{AddressesSeen, MAX_SEEN};
 
+#[cfg(context = "nrf5340dk-net")]
 use embassy_nrf::peripherals::SERIAL0;
+#[cfg(context = "nrf52dk")]
+use embassy_nrf::peripherals::UARTE0;
 use embassy_nrf::{bind_interrupts, uarte};
 
 static SEEN: Mutex<FnvIndexMap<BdAddr, Instant, MAX_SEEN>> = Mutex::new(FnvIndexMap::new());
 
+#[cfg(context = "nrf5340dk-net")]
 bind_interrupts!(struct Irqs {
     SERIAL0 => uarte::InterruptHandler<SERIAL0>;
+});
+
+#[cfg(context = "nrf52dk")]
+bind_interrupts!(struct Irqs {
+    UARTE0 => uarte::InterruptHandler<UARTE0>;
 });
 
 #[ariel_os::task(autostart)]
@@ -61,7 +72,6 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
     loop {
         Timer::after_secs(2).await;
         info!("Sending scan data...");
-        // Remove entries older than 10 minutes
         let seen = {
             let mut seen = SEEN.lock();
             let v: heapless::Vec<BdAddr, MAX_SEEN> = seen.keys().cloned().collect();
@@ -74,8 +84,11 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
             Cobs::try_new(Slice::new(buffer)).unwrap(),
         );
 
+        // let buffer = &mut [0u8; 16];
+        // let data: Result<&'static [u8; 5], &'static str> = Ok(b"Hello");
+
         match data {
-            Ok(slice) => match uart.write(slice).await {
+            Ok(slice) => match uart.write_all(slice).await {
                 Ok(_) => {
                     info!("Sent {} bytes", slice.len());
                 }

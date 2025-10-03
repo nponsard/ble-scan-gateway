@@ -1,12 +1,13 @@
 imports:
   - git:
-      url: https://github.com/nponsard/ariel-os
-      branch: la-poste-demo
+      url: https://github.com/ariel-os/ariel-os
+      commit: ce5d056d924d1963006df1fbe3ff48809bdfba14
     dldir: ariel-os
 
 apps:
   - name: ble-scan-reporter-demo
     context:
       - nrf5340dk-net
+      - nrf52dk
     selects:
       - ble-central
