@@ -17,7 +17,7 @@ use trouble_host::{
 };
 
 use ariel_os::{
-    debug::log::{info, warn},
+    debug::log::{info, trace, warn},
     thread::sync::Mutex,
     time::{Duration, Instant, Timer},
 };
@@ -59,7 +59,7 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
         config,
     );
     loop {
-        Timer::after_secs(30).await;
+        Timer::after_secs(2).await;
         info!("Sending scan data...");
         // Remove entries older than 10 minutes
         let seen = {
@@ -68,7 +68,7 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
             seen.clear();
             v
         };
-        let buffer = &mut [0u8; 32];
+        let buffer = &mut [0u8; 1024];
         let data = serialize_with_flavor::<AddressesSeen, Cobs<Slice>, &mut [u8]>(
             &AddressesSeen::from(seen),
             Cobs::try_new(Slice::new(buffer)).unwrap(),
@@ -139,7 +139,7 @@ impl EventHandler for DiscorveryHandler {
         let mut seen = SEEN.lock();
         while let Some(Ok(report)) = it.next() {
             if !seen.contains_key(&report.addr) {
-                info!("discovered: {:?}", report.addr);
+                trace!("discovered: {:?}", report.addr);
                 // force cleanup if we have too many entries
                 if seen.len() >= MAX_SEEN {
                     remove_old_entries(&mut seen);
