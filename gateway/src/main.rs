@@ -20,7 +20,6 @@ use embassy_net::{
 };
 use embassy_nrf::peripherals::SERIAL3;
 use embassy_nrf::{bind_interrupts, uarte};
-use embedded_io_async::Read as _;
 use heapless::{FnvIndexMap, Vec};
 use reqwless::{
     client::HttpClient,
@@ -60,7 +59,7 @@ fn remove_oldest_entry(seen: &mut SeenMap) {
     }
 }
 
-// #[ariel_os::task(autostart)]
+#[ariel_os::task(autostart)]
 async fn automatic_cleanup() {
     loop {
         Timer::after_secs(30).await;
@@ -76,6 +75,8 @@ async fn automatic_cleanup() {
 
 #[ariel_os::task(autostart, peripherals)]
 async fn uart_receive(peripherals: Peripherals) {
+    let mut led = Output::new(peripherals.led, Level::Low);
+    led.set_high();
     let mut config = uarte::Config::default();
     config.parity = uarte::Parity::EXCLUDED;
     config.baudrate = uarte::Baudrate::BAUD115200;
@@ -88,15 +89,17 @@ async fn uart_receive(peripherals: Peripherals) {
         config,
     );
     let mut packet_buffer: Vec<u8, 2048> = Vec::new();
-    let mut uart_read_buf = [0u8; 2048];
+    let mut uart_read_buf = [0u8; 64];
 
     loop {
+        led.set_high();
         debug!("Waiting for UART data...");
         let result = uart.read(&mut uart_read_buf).await;
         if let Err(e) = result {
             error!("UART read error: {:?}", e);
             continue;
         }
+        led.set_low();
 
         debug!("Read 64 bytes from UART");
         packet_buffer.extend_from_slice(&uart_read_buf).unwrap();
@@ -131,7 +134,7 @@ async fn uart_receive(peripherals: Peripherals) {
     }
 }
 
-// #[ariel_os::task(autostart)]
+#[ariel_os::task(autostart)]
 async fn update_location() {
     let spawner = Spawner::for_current_executor().await;
 
@@ -206,7 +209,7 @@ async fn update_location() {
     }
 }
 
-// #[ariel_os::task(autostart)]
+#[ariel_os::task(autostart)]
 async fn send_updates() {
     let mut last_update = Instant::now();
 
@@ -277,7 +280,7 @@ async fn send_http_post_request(
     > = client.request(Method::POST, url).await?;
     let mut handle = handle
         .body(content)
-        .content_type(ContentType::ApplicationOctetStream);
+        .content_type(ContentType::ApplicationJson);
     let response = handle.send(&mut http_rx_buf).await?;
 
     info!("Response status: {}", response.status.0);

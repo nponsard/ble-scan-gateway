@@ -9,4 +9,5 @@ ariel_os::hal::define_peripherals!(Peripherals {
     uart_rx: P0_05,
     btn1: P0_26,
     serial: SERIAL3,
+    led: P0_30,
 });
