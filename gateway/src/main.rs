@@ -7,7 +7,7 @@ use ariel_os::{
     asynch::Spawner,
     debug::log::{debug, error, info, warn},
     gpio::{Input, Level, Output, Pull},
-    hal, net,
+    net,
     reexports::embassy_net,
     sensors::{Label, Reading, Sensor},
     time::{Duration, Instant, Timer},
@@ -20,6 +20,7 @@ use embassy_net::{
 };
 use embassy_nrf::peripherals::SERIAL3;
 use embassy_nrf::{bind_interrupts, uarte};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 use heapless::{FnvIndexMap, Vec};
 use reqwless::{
     client::HttpClient,
@@ -27,16 +28,14 @@ use reqwless::{
     request::{Method, RequestBuilder},
 };
 
-bind_interrupts!(struct Irqs {
-    SERIAL3 => uarte::InterruptHandler<SERIAL3>;
-});
-
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
-
 use crate::{
     pins::{GnssStatusPeripherals, UartPeripherals, UpdatePeripherals},
     sensors::NRF91_GNSS,
 };
+
+bind_interrupts!(struct Irqs {
+    SERIAL3 => uarte::InterruptHandler<SERIAL3>;
+});
 
 type SeenMap = FnvIndexMap<[u8; 6], Instant, MAX_SEEN>;
 static SEEN: Mutex<CriticalSectionRawMutex, SeenMap> = Mutex::new(FnvIndexMap::new());
