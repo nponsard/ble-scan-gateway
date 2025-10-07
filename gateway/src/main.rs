@@ -33,7 +33,10 @@ bind_interrupts!(struct Irqs {
 
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 
-use crate::{pins::Peripherals, sensors::NRF91_GNSS};
+use crate::{
+    pins::{GnssStatusPeripherals, UartPeripherals, UpdatePeripherals},
+    sensors::NRF91_GNSS,
+};
 
 type SeenMap = FnvIndexMap<[u8; 6], Instant, MAX_SEEN>;
 static SEEN: Mutex<CriticalSectionRawMutex, SeenMap> = Mutex::new(FnvIndexMap::new());
@@ -42,7 +45,7 @@ static CURRENT_LOCATION: Mutex<CriticalSectionRawMutex, Option<Location>> = Mute
 
 const MAX_CONCURRENT_CONNECTIONS: usize = 2;
 
-const ENDPOINT_URL: &str = "http://83.202.186.173:4230/mac";
+const ENDPOINT_URL: &str = "http://83.202.186.173:4233/mac";
 
 const TCP_BUFFER_SIZE: usize = 1024;
 const HTTP_BUFFER_SIZE: usize = 1024;
@@ -74,9 +77,7 @@ async fn automatic_cleanup() {
 }
 
 #[ariel_os::task(autostart, peripherals)]
-async fn uart_receive(peripherals: Peripherals) {
-    let mut led = Output::new(peripherals.led, Level::Low);
-    led.set_high();
+async fn uart_receive(peripherals: UartPeripherals) {
     let mut config = uarte::Config::default();
     config.parity = uarte::Parity::EXCLUDED;
     config.baudrate = uarte::Baudrate::BAUD115200;
@@ -92,14 +93,12 @@ async fn uart_receive(peripherals: Peripherals) {
     let mut uart_read_buf = [0u8; 64];
 
     loop {
-        led.set_high();
         debug!("Waiting for UART data...");
         let result = uart.read(&mut uart_read_buf).await;
         if let Err(e) = result {
             error!("UART read error: {:?}", e);
             continue;
         }
-        led.set_low();
 
         debug!("Read 64 bytes from UART");
         let err = packet_buffer.extend_from_slice(&uart_read_buf);
@@ -139,8 +138,10 @@ async fn uart_receive(peripherals: Peripherals) {
     }
 }
 
-#[ariel_os::task(autostart)]
-async fn update_location() {
+#[ariel_os::task(autostart, peripherals)]
+async fn update_location(peripherals: GnssStatusPeripherals) {
+    let mut led = Output::new(peripherals.led_blue, Level::Low);
+
     let spawner = Spawner::for_current_executor().await;
     unsafe {
         nrfxlib_sys::nrf_modem_gnss_prio_mode_enable();
@@ -211,16 +212,23 @@ async fn update_location() {
             }
 
             if found_altitude && found_latitude && found_longitude && found_timestamp {
+                led.set_high();
                 debug!("updating location");
                 let mut loc_lock = CURRENT_LOCATION.lock().await;
                 *loc_lock = Some(location);
+            } else {
+                led.set_low();
             }
         }
     }
 }
 
-#[ariel_os::task(autostart)]
-async fn send_updates() {
+#[ariel_os::task(autostart, peripherals)]
+async fn send_updates(peripherals: UpdatePeripherals) {
+    let mut led = Output::new(peripherals.led_green, Level::Low);
+    let mut btn1 = Input::builder(peripherals.btn1, Pull::Up)
+        .build_with_interrupt()
+        .unwrap();
     let mut last_update = Instant::now();
 
     let stack = net::network_stack().await.unwrap();
@@ -232,21 +240,19 @@ async fn send_updates() {
 
     let mut client = HttpClient::new(&tcp_client, &dns_client);
 
-    // let mut btn1 = Input::builder(peripherals.btn1, Pull::Up)
-    //     .build_with_interrupt()
-    //     .unwrap();
-
     //   unsafe {
     //     nrfxlib_sys::nrf_modem_gnss_prio_mode_enable();
     // }
     loop {
         // Wait for the button being pressed or 60s, whichever comes first.
-        // let _ = embassy_futures::select::select(btn1.wait_for_low(), Timer::after_nanos(60)).await;
         info!("Waiting 60s before sending next update...");
         // unsafe {
         //     nrfxlib_sys::nrf_modem_gnss_prio_mode_enable();
         // }
-        Timer::after_secs(60).await;
+        led.set_low();
+        let _ = embassy_futures::select::select(btn1.wait_for_low(), Timer::after_secs(60)).await;
+        led.set_high();
+        // Timer::after_secs(60).await;
         // Prevent sending updates too frequently
         if last_update.elapsed() < Duration::from_secs(10) {
             warn!("Update skipped to avoid sending updates too frequently");
