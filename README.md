@@ -2,37 +2,68 @@
 
 This repository is a poof of concept showing how we can report the presence of BLE tags in the proximity of a MCU.
 
-This version is using the nRF5340, tested with the Thingy91X development kit.
+This version is using the Thingy91X development kit.
 
 ## Architecture
 
-### Network core
+```mermaid
+graph TD;
+    B(BLE scan) --> nRF5340;
+    G(GNSS location) --> nRF9151;
+    nRF5340-->|UART + Postcard| nRF9151;
+    nRF9151-->|LTE-M + HTTP| server;
+```
 
-The network core on the nRF5340 has a limited set of features and is dedicated here to the BLE communication.
+### nRF5340 Network core
 
-The network core scans for BLE devices and keeps track of the last time they have been detected. A task is running to clear the records of scanned devices older than 10 minute.
+`net/` directory.
 
-Another task is then copying the current list of scanned devices to the memory of the application core as a list bytes corresponding of the MAC addresses chained together, with 6 bytes per address and a length of 128 addresses.
+The network core of the nRF5340 MCU is scanning for BLE packets and sending them to the nRF9151 SiP using UART (VCOM1).
 
-### Application core
+One task scans for BLE advertisement packets and store them in a list.  
+The second task reads this list and writes it into the UART channel every 2 seconds. Using `postcard` encoding and applying `COBS` on top. Once the data is sent the list of scanned devices is cleared.
 
-The application core of the nRF5340 is more powerful than the Network core. It handles the ethernet over USB communication and is responsible for starting ("releasing") the network core.
+### nRF5340 Application core
 
-A task runs on the application core to read the memory region where the network core wrote the list of addresses and sends them via HTTP using the USB ethernet connection to the host PC. The  POST request is sent to the IP 10.42.0.1, port 3000 and path `/mac`, the body is the raw content of this memory region.
+`app/` directory.
+
+The application core is not used in this project. It is only used to initialize the peripherals and start the network core.
+
+### nRF9151
+
+`gateway/` directory.
+
+This chip is used to get the location of the board using GNSS and communicate using LTE-M.
+
+It is responsible for aggregating the information and sending it to the server.
+
+- A first task reads the UART (VCOM1) channel, decodes and stores the BLE devices listed by the nRF5340, a timestamp is attached to each address to record when it was last seen.
+- The second task deletes addresses that have a timestamp older than 10 minutes. This removes devices that havent been detected for too long (out of range).
+- A third task fetches the new position (latitude, longitude and altitude) reported by the GNSS sensor (new value approximately every second). If the position returned is valid it will be saved in a shared variable as the last know position.
+- The last task sets up LTE-M networking and sends updates to the server every 60 seconds or when the button is pressed. The update is a `POST` request to the endpoint configured in `ENDPOINT_URL`, the body is the JSON serialization of `common_types::GatewayUpdate`, it contains the last known location and the list of devices that have been detected.
 
 ### The server
 
-The server is run on the host PC and listens on all interfaces (for convenience) on port 3000, once it receives a POST request on `/mac`, the body of the request is read and split by chuncks of 6, each chunk corresponds to one MAC address that can then be printed in the console.
+The server is run on the host PC and listens on all interfaces (for convenience) on port 4230, once it receives a POST request on `/mac`, the body of the request is decoded and printed to the console.
+
+This server port has to be reachable by the developement kit's LTE-M network connection, the easiest is to have the port of the server exposed to the internet.
+
+### Extras
+
+- `common-types` contains the types that are sent through communication channels (UART, networking) and so are used in two programs.
+- `reader` is a test application that reads the data sent through `UART` from the `net` application.
 
 ## Setup
 
 ### Flashing
 
-We need to flash both cores of the nRF5340.
+We need to flash both cores of the nRF5340 and the nRF9151.
 
-On the Thingy91X you will need to connect an external programmer through P8 or P9, provide power via the USB-C connector (J6), ensure the power switch (SW1) is in the "ON" position and the SWD switch (SW2) is in the "nRF53" posistion.
+On the Thingy91X you will need to connect an external programmer through P8 or P9, provide power via the USB-C connector (J6), ensure the power switch (SW1) is in the "ON" position.
 
 #### Network core
+
+Set the SWD switch (SW2) to the "nRF53" posistion.
 
 ```sh
 cd net
@@ -42,77 +73,30 @@ laze build -b nrf5340dk-net run
 > If probe-rs complains about the core being locked up, add `-- --allow-erase-all` at the end of the command:
 >
 > ```sh
-> laze build -b nrf5340dk-net run -- --allow-erase-all   
+> laze build -b nrf5340dk-net run -- --allow-erase-all
 > ```
 
 Once you see that the program is started (showing `INFO` lines with the text `scanning...`) you can close the debugging session by pressing `ctrl + C` or closing the terminal.
 
 #### Application core
 
+Set the SWD switch (SW2) to the "nRF53" posistion.
+
 ```sh
-cd net
+cd app
 laze build -b nrf5340dk run
 ```
 
-### Network communication
+#### nRF9151
 
-Connect the USB port of the nRF5340 to your computer, on the Thingy91X it's the USB-C port (J6). Your computer should detect a new network interface. You can list them using `ip a`:
-
-```log
-$ ip a
-1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
-    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
-    inet 127.0.0.1/8 scope host lo
-       valid_lft forever preferred_lft forever
-    inet6 ::1/128 scope host noprefixroute 
-       valid_lft forever preferred_lft forever
-2: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP group default qlen 1000
-    link/ether 24:eb:16:d2:b3:e2 brd ff:ff:ff:ff:ff:ff
-    inet 192.168.1.16/24 brd 192.168.1.255 scope global dynamic noprefixroute wlan0
-       valid_lft 82194sec preferred_lft 82194sec
-    inet6 2a01:cb04:4d8:4400:785d:939a:8ca3:313e/64 scope global dynamic noprefixroute 
-       valid_lft 1774sec preferred_lft 574sec
-    inet6 fe80::e75b:b001:155c:674c/64 scope link noprefixroute 
-       valid_lft forever preferred_lft forever
-14: enp0s20f0u2u4: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP group default qlen 1000
-    link/ether c2:ee:05:af:55:c5 brd ff:ff:ff:ff:ff:ff
-    altname enxc2ee05af55c5
-```
-
-Here the interface created by the development board is `enp0s20f0u2u4`, it has no configured IPv4 addresses.
-
-The application has a pre-configured address of `10.42.0.61` and expects to send the data to `10.42.0.1`, we can set our PC to assume this address using the `iproute2` utility:
+Set the SWD switch (SW2) to the "nRF91" posistion.
 
 ```sh
-sudo ip addr add 10.42.0.1/24 dev enp0s20f0u2u4    
+cd gateway
+laze build -b nordic-thingy-91-x-nrf9151 run
 ```
 
-Replace `enp0s20f0u2u4` with the interface name you found earlier.
-
-#### NetworkManager
-
-Modern distributions use NetworkManager, setting the address using `iproute2` might not be enough, you will need to configure it using NetworkManager:
-
-First, find the connection name attributed by NetworkManager to the interface/device using `nmcli con`:
-
-```log
-# nmcli con 
-NAME                 UUID                                  TYPE       DEVICE        
-Wired connection 1   ec2f8a54-4cf1-363d-959c-f7058c3be7aa  ethernet   enp0s20f0u2u4 
-lo                   2d6db6c5-5c93-4e80-8564-57f6e423ef31  loopback   lo        
-```
-
-Here the connection name is `'Wired connection 1'`, quotes will be needed because of the spaces in the name.
-
-To set the IPv4 address use this command:
-
-```sh
-sudo nmcli connection modify 'Wired connection 1' ipv4.addresses "10.42.0.1/24" ipv4.method "manual"
-```
-
-Replace `'Wired connection 1'` with your connection name.
-
-### Web server
+### Server
 
 To receive the requests of the device and see its content you can use the sample web server, to run it do:
 
@@ -121,11 +105,22 @@ cd server
 cargo run --release
 ```
 
-New reports will appear like this:
+New reports will appear like this (here the GNSS location was not obtained yet):
 
 ```log
-Received report: 768
-MAC: 59 e5 f3 2e 92 c6 
-MAC: 79 9e f7 f0 8f cf 
-MAC: 51 8e 95 cd d0 07 
+Received update at 2025-10-07T14:19:29.882282308+02:00
+Time of fix: None
+Position: None
+Altitude: None
+Number of MAC addresses: 10
+DE:3F:A6:0C:47:EC
+CA:39:3F:DA:C3:6F
+67:E0:A2:D3:69:4F
+7A:3A:48:34:A6:E4
+B2:21:7B:7E:C7:4D
+DE:72:F4:4E:12:4F
+E3:C7:71:84:B4:5A
+B9:01:2B:8D:1F:4A
+E4:93:47:2D:0D:94
+F6:47:47:E4:22:6B
 ```
