@@ -140,7 +140,9 @@ async fn uart_receive(peripherals: UartPeripherals) {
 
 #[ariel_os::task(autostart, peripherals)]
 async fn update_location(peripherals: GnssStatusPeripherals) {
-    let mut led = Output::new(peripherals.led_blue, Level::Low);
+    let mut led_blue = Output::new(peripherals.led_blue, Level::Low);
+    let mut led_red = Output::new(peripherals.led_red, Level::Low);
+    led_red.set_high();
 
     let spawner = Spawner::for_current_executor().await;
     unsafe {
@@ -212,12 +214,13 @@ async fn update_location(peripherals: GnssStatusPeripherals) {
             }
 
             if found_altitude && found_latitude && found_longitude && found_timestamp {
-                led.set_high();
+                led_red.set_low();
+                led_blue.set_high();
                 debug!("updating location");
                 let mut loc_lock = CURRENT_LOCATION.lock().await;
                 *loc_lock = Some(location);
             } else {
-                led.set_low();
+                led_blue.set_low();
             }
         }
     }
