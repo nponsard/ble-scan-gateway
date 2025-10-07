@@ -3,6 +3,7 @@ use axum::{
     http::StatusCode,
     routing::{get, post},
 };
+use chrono::Local;
 use common_types::GatewayUpdate;
 
 #[tokio::main]
@@ -27,7 +28,8 @@ async fn root() -> &'static str {
 }
 
 async fn receive_mac(extract::Json(payload): extract::Json<GatewayUpdate>) -> (StatusCode, String) {
-    println!("Received update");
+    let local = Local::now();
+    println!("Received update at {:?}", local);
     println!(
         "Time of fix: {:?}",
         payload.location.map(|loc| loc.timestamp)
