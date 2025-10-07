@@ -102,7 +102,12 @@ async fn uart_receive(peripherals: Peripherals) {
         led.set_low();
 
         debug!("Read 64 bytes from UART");
-        packet_buffer.extend_from_slice(&uart_read_buf).unwrap();
+        let err = packet_buffer.extend_from_slice(&uart_read_buf);
+        if let Err(e) = err {
+            warn!("Packet buffer full, dropping data: {:?}", e);
+            packet_buffer.clear();
+            continue;
+        }
         if let Some(separator) = packet_buffer.iter().position(|&b| b == 0x00) {
             let instant = Instant::now();
             let packet = &mut packet_buffer[..separator];
@@ -137,7 +142,12 @@ async fn uart_receive(peripherals: Peripherals) {
 #[ariel_os::task(autostart)]
 async fn update_location() {
     let spawner = Spawner::for_current_executor().await;
+    unsafe {
+        nrfxlib_sys::nrf_modem_gnss_prio_mode_enable();
+    }
 
+    // let res = nrf_modem::send_at::<0>(r#"AT+CPSMS=1,"","","00101000","00001000""#).await;
+    // debug!("AT+CPSMS=1 result: {:?}", defmt::Debug2Format(&res));
     sensors::NRF91_GNSS
         .init(ariel_os_nrf91_gnss::config::Config::default())
         .await;
@@ -226,10 +236,16 @@ async fn send_updates() {
     //     .build_with_interrupt()
     //     .unwrap();
 
+    //   unsafe {
+    //     nrfxlib_sys::nrf_modem_gnss_prio_mode_enable();
+    // }
     loop {
         // Wait for the button being pressed or 60s, whichever comes first.
         // let _ = embassy_futures::select::select(btn1.wait_for_low(), Timer::after_nanos(60)).await;
         info!("Waiting 60s before sending next update...");
+        // unsafe {
+        //     nrfxlib_sys::nrf_modem_gnss_prio_mode_enable();
+        // }
         Timer::after_secs(60).await;
         // Prevent sending updates too frequently
         if last_update.elapsed() < Duration::from_secs(10) {

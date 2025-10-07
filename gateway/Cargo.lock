@@ -532,6 +532,7 @@ dependencies = [
  "embedded-io-async",
  "heapless 0.8.0",
  "linkme",
+ "nrfxlib-sys",
  "postcard",
  "rand_core",
  "reqwless",
