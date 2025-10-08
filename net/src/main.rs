@@ -77,18 +77,6 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
         config,
     );
 
-    // let mut buf = [0; 8];
-    // buf.copy_from_slice(b"Hello!\r\n");
-
-    // uart.write(&buf).await.unwrap();
-    // info!("wrote hello in uart!");
-
-    // loop {
-    //     // info!("reading...");
-    //     // uart.read(&mut buf).await.unwrap();
-    //     info!("writing...");
-    //     uart.write(&buf).await.unwrap();
-    // }
 
     loop {
         Timer::after_secs(2).await;

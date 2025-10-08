@@ -18,7 +18,7 @@ async fn main() {
         .route("/mac", post(receive_mac));
 
     // run our app with hyper, listening globally on port 3000
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:4230").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:4500").await.unwrap();
     println!("Listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
@@ -42,20 +42,18 @@ async fn receive_mac(extract::Json(payload): extract::Json<GatewayUpdate>) -> (S
     println!("Altitude: {:?}", payload.location.map(|loc| loc.altitude));
     println!("Number of MAC addresses: {}", payload.seen.len());
 
+    let formatted = payload
+        .seen
+        .iter()
+        .map(|seen| seen.map(|s| format!("{:02x}", s)).join(":"))
+        .collect::<Vec<String>>();
+
     // If there are too many addresses, print them all on one line
     if payload.seen.len() > 40 {
-        println!(
-            "{}",
-            payload
-                .seen
-                .iter()
-                .map(|seen| seen.map(|s| s.to_string()).join(":"))
-                .collect::<Vec<String>>()
-                .join(", ")
-        );
+        println!("{}", formatted.join(", "));
     } else {
-        for seen in &payload.seen {
-            println!("{}", seen.map(|s| s.to_string()).join(":"));
+        for mac in formatted {
+            println!("{}", mac);
         }
     }
 

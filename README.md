@@ -93,8 +93,10 @@ Set the SWD switch (SW2) to the "nRF91" posistion.
 
 ```sh
 cd gateway
-laze build -b nordic-thingy-91-x-nrf9151 run
+BACKEND_ENDPOINT=<endpoint> laze build -b nordic-thingy-91-x-nrf9151 run
 ```
+
+Replace `<endpoint>` with the URL of the endpoint (ex: `http://example.com:4500/mac`).
 
 ### Server
 

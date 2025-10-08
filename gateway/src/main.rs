@@ -4,6 +4,7 @@ mod pins;
 mod sensors;
 
 use ariel_os::{
+    config::str_from_env,
     asynch::Spawner,
     debug::log::{debug, error, info, warn},
     gpio::{Input, Level, Output, Pull},
@@ -44,7 +45,10 @@ static CURRENT_LOCATION: Mutex<CriticalSectionRawMutex, Option<Location>> = Mute
 
 const MAX_CONCURRENT_CONNECTIONS: usize = 2;
 
-const ENDPOINT_URL: &str = "http://83.202.186.173:4233/mac";
+const ENDPOINT_URL: &str = str_from_env!(
+    "BACKEND_ENDPOINT",
+    "Backend endpoint URL, including protocol, host, port and path"
+);
 
 const TCP_BUFFER_SIZE: usize = 1024;
 const HTTP_BUFFER_SIZE: usize = 1024;
