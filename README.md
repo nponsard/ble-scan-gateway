@@ -124,3 +124,19 @@ B9:01:2B:8D:1F:4A
 E4:93:47:2D:0D:94
 F6:47:47:E4:22:6B
 ```
+
+## Usage
+
+### LED status
+
+There is an RGB led on the Thingy91X, for now each color (red, green, blue) is used as individual LEDs to represent the status of different components.
+
+- Red: first GNSS fix hasn't been acquired yet (location unknown)
+- Blue: last data returned by the GNSS module was a valid location (updates every second)
+- Green: sending update to the server using LTE-M.
+
+Since those 3 colors are in the same package, two concurrent statuses can make different colors.
+
+### Input
+
+The top button can be pressed to force an update to be sent before the 60 seconds have been elapsed.
