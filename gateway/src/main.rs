@@ -21,7 +21,7 @@ use embassy_net::{
     tcp::client::{TcpClient, TcpClientState},
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
-use embedded_io_async::Read;
+use embedded_io_async::BufRead;
 use heapless::{FnvIndexMap, Vec};
 use reqwless::{
     client::HttpClient,
@@ -81,7 +81,7 @@ async fn uart_receive(peripherals: UartPeripherals) {
     config.baudrate = Baudrate::_115200;
 
     let mut rx_buf = [0u8; 32];
-    let mut tx_buf = [0u8; 32];
+    let mut tx_buf = [0u8; 1];
 
     let mut uart = pins::ReceiverUart::new(
         peripherals.uart_rx,
@@ -92,26 +92,27 @@ async fn uart_receive(peripherals: UartPeripherals) {
     )
     .expect("Invalid UART configuration");
     let mut packet_buffer: Vec<u8, 2048> = Vec::new();
-    let mut uart_read_buf = [0u8; 64];
 
     loop {
         debug!("Waiting for UART data...");
-        let result = uart.read(&mut uart_read_buf).await;
-        let size_read = match result {
+        let result = uart.fill_buf().await;
+        let read = match result {
             Err(e) => {
                 error!("UART read error: {:?}", e);
                 continue;
             }
             Ok(n) => n,
         };
-
-        debug!("Read 64 bytes from UART");
-        let err = packet_buffer.extend_from_slice(&uart_read_buf[..size_read]);
+        let size_read = read.len();
+        debug!("Read {} bytes from UART", size_read);
+        let err = packet_buffer.extend_from_slice(read);
         if let Err(e) = err {
             warn!("Packet buffer full, dropping data: {:?}", e);
             packet_buffer.clear();
             continue;
         }
+        uart.consume(size_read);
+
         if let Some(separator) = packet_buffer.iter().position(|&b| b == 0x00) {
             let instant = Instant::now();
             let packet = &mut packet_buffer[..separator];

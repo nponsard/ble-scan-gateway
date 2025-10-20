@@ -23,8 +23,7 @@ use ariel_os::{
     uart::Baudrate,
 };
 use common_types::{AddressesSeen, MAX_SEEN};
-use embedded_io_async::Read;
-
+use embedded_io_async::BufRead;
 
 #[ariel_os::task(autostart, peripherals)]
 async fn get_scan_data(peripherals: pins::Peripherals) {
@@ -44,7 +43,6 @@ async fn get_scan_data(peripherals: pins::Peripherals) {
     )
     .expect("Invalid UART configuration");
     let mut packet_buffer: Vec<u8, 2048> = Vec::new();
-    let mut uart_read_buf = [0u8; 128];
 
     // let mut buf = [0; 8];
     // buf.copy_from_slice(b"Hello!\r\n");
@@ -68,19 +66,19 @@ async fn get_scan_data(peripherals: pins::Peripherals) {
 
     loop {
         debug!("Waiting for UART data...");
-        let result = uart.read(&mut uart_read_buf).await;
-        let size_read = match result {
+        let result = uart.fill_buf().await;
+        let read = match result {
             Err(e) => {
                 error!("UART read error: {:?}", e);
                 continue;
             }
             Ok(n) => n,
         };
+        let len = read.len();
+        debug!("Read {} bytes from UART", read.len());
+        packet_buffer.extend_from_slice(read).unwrap();
 
-        debug!("Read 64 bytes from UART");
-        packet_buffer
-            .extend_from_slice(&uart_read_buf[..size_read])
-            .unwrap();
+        uart.consume(len);
         if let Some(separator) = packet_buffer.iter().position(|&b| b == 0x00) {
             let packet = &mut packet_buffer[..separator];
             debug!("Received packet, trying to decode...");
