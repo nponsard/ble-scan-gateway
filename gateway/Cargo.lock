@@ -184,6 +184,7 @@ dependencies = [
  "embassy-executor",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
+ "embedded-io-async",
  "esp-hal",
  "esp-hal-embassy",
  "once_cell",
@@ -255,6 +256,7 @@ dependencies = [
  "embassy-nrf",
  "embassy-sync 0.6.2",
  "embedded-hal-async",
+ "embedded-io-async",
  "paste",
  "portable-atomic",
  "static_cell",
@@ -294,6 +296,7 @@ dependencies = [
  "embassy-executor",
  "embassy-rp",
  "embedded-hal-async",
+ "embedded-io-async",
  "paste",
 ]
 
@@ -336,6 +339,7 @@ dependencies = [
  "embassy-executor",
  "embassy-stm32",
  "embedded-hal-async",
+ "embedded-io-async",
  "paste",
  "portable-atomic",
  "static_cell",

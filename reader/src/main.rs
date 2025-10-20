@@ -18,39 +18,31 @@ use trouble_host::{
 
 use ariel_os::{
     debug::log::{debug, error, info, trace, warn},
+    hal,
     time::{Duration, Instant, Timer},
+    uart::Baudrate,
 };
-
 use common_types::{AddressesSeen, MAX_SEEN};
-#[cfg(context = "nrf9151")]
-use embassy_nrf::peripherals::SERIAL3;
-#[cfg(any(context = "nrf52840", context = "nrf52832"))]
-use embassy_nrf::peripherals::UARTE0;
-use embassy_nrf::{bind_interrupts, uarte};
+use embedded_io_async::Read;
 
-#[cfg(context = "nrf9151")]
-bind_interrupts!(struct Irqs {
-    SERIAL3 => uarte::InterruptHandler<SERIAL3>;
-});
-
-#[cfg(any(context = "nrf52840", context = "nrf52832"))]
-bind_interrupts!(struct Irqs {
-    UARTE0 => uarte::InterruptHandler<UARTE0>;
-});
 
 #[ariel_os::task(autostart, peripherals)]
 async fn get_scan_data(peripherals: pins::Peripherals) {
-    let mut config = uarte::Config::default();
-    config.parity = uarte::Parity::EXCLUDED;
-    config.baudrate = uarte::Baudrate::BAUD115200;
+    let mut config = hal::uart::Config::default();
+    config.baudrate = Baudrate::_115200;
+    info!("Selected configuration: {:?}", config);
 
-    let mut uart = uarte::Uarte::new(
-        peripherals.serial,
-        Irqs,
-        peripherals.uart_tx,
+    let mut rx_buf = [0u8; 32];
+    let mut tx_buf = [0u8; 32];
+
+    let mut uart = pins::ReceiverUart::new(
         peripherals.uart_rx,
+        peripherals.uart_tx,
+        &mut rx_buf,
+        &mut tx_buf,
         config,
-    );
+    )
+    .expect("Invalid UART configuration");
     let mut packet_buffer: Vec<u8, 2048> = Vec::new();
     let mut uart_read_buf = [0u8; 128];
 
@@ -77,15 +69,19 @@ async fn get_scan_data(peripherals: pins::Peripherals) {
     loop {
         debug!("Waiting for UART data...");
         let result = uart.read(&mut uart_read_buf).await;
-        if let Err(e) = result {
-            error!("UART read error: {:?}", e);
-            continue;
-        }
+        let size_read = match result {
+            Err(e) => {
+                error!("UART read error: {:?}", e);
+                continue;
+            }
+            Ok(n) => n,
+        };
 
         debug!("Read 64 bytes from UART");
-        packet_buffer.extend_from_slice(&uart_read_buf).unwrap();
+        packet_buffer
+            .extend_from_slice(&uart_read_buf[..size_read])
+            .unwrap();
         if let Some(separator) = packet_buffer.iter().position(|&b| b == 0x00) {
-            let instant = Instant::now();
             let packet = &mut packet_buffer[..separator];
             debug!("Received packet, trying to decode...");
 

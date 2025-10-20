@@ -4,14 +4,15 @@ mod pins;
 mod sensors;
 
 use ariel_os::{
-    config::str_from_env,
     asynch::Spawner,
+    config::str_from_env,
     debug::log::{debug, error, info, warn},
     gpio::{Input, Level, Output, Pull},
-    net,
+    hal, net,
     reexports::embassy_net,
     sensors::{Label, Reading, Sensor},
     time::{Duration, Instant, Timer},
+    uart::Baudrate,
 };
 use ariel_os_nrf91_gnss::Nrf91GnssExt;
 use common_types::{AddressesSeen, GatewayUpdate, Location, MAX_SEEN};
@@ -19,9 +20,8 @@ use embassy_net::{
     dns::DnsSocket,
     tcp::client::{TcpClient, TcpClientState},
 };
-use embassy_nrf::peripherals::SERIAL3;
-use embassy_nrf::{bind_interrupts, uarte};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
+use embedded_io_async::Read;
 use heapless::{FnvIndexMap, Vec};
 use reqwless::{
     client::HttpClient,
@@ -33,10 +33,6 @@ use crate::{
     pins::{GnssStatusPeripherals, UartPeripherals, UpdatePeripherals},
     sensors::NRF91_GNSS,
 };
-
-bind_interrupts!(struct Irqs {
-    SERIAL3 => uarte::InterruptHandler<SERIAL3>;
-});
 
 type SeenMap = FnvIndexMap<[u8; 6], Instant, MAX_SEEN>;
 static SEEN: Mutex<CriticalSectionRawMutex, SeenMap> = Mutex::new(FnvIndexMap::new());
@@ -81,30 +77,36 @@ async fn automatic_cleanup() {
 
 #[ariel_os::task(autostart, peripherals)]
 async fn uart_receive(peripherals: UartPeripherals) {
-    let mut config = uarte::Config::default();
-    config.parity = uarte::Parity::EXCLUDED;
-    config.baudrate = uarte::Baudrate::BAUD115200;
+    let mut config = hal::uart::Config::default();
+    config.baudrate = Baudrate::_115200;
 
-    let mut uart = uarte::Uarte::new(
-        peripherals.serial,
-        Irqs,
-        peripherals.uart_tx,
+    let mut rx_buf = [0u8; 32];
+    let mut tx_buf = [0u8; 32];
+
+    let mut uart = pins::ReceiverUart::new(
         peripherals.uart_rx,
+        peripherals.uart_tx,
+        &mut rx_buf,
+        &mut tx_buf,
         config,
-    );
+    )
+    .expect("Invalid UART configuration");
     let mut packet_buffer: Vec<u8, 2048> = Vec::new();
     let mut uart_read_buf = [0u8; 64];
 
     loop {
         debug!("Waiting for UART data...");
         let result = uart.read(&mut uart_read_buf).await;
-        if let Err(e) = result {
-            error!("UART read error: {:?}", e);
-            continue;
-        }
+        let size_read = match result {
+            Err(e) => {
+                error!("UART read error: {:?}", e);
+                continue;
+            }
+            Ok(n) => n,
+        };
 
         debug!("Read 64 bytes from UART");
-        let err = packet_buffer.extend_from_slice(&uart_read_buf);
+        let err = packet_buffer.extend_from_slice(&uart_read_buf[..size_read]);
         if let Err(e) = err {
             warn!("Packet buffer full, dropping data: {:?}", e);
             packet_buffer.clear();
