@@ -5,11 +5,11 @@
   "type": "object",
   "properties": {
     "gatewayId": {
-      "description": "Uinque identifier of the gateway.",
+      "description": "Unique identifier of the gateway.",
       "type": "string"
     },
     "timestamp": {
-      "description": "Timestamp of when this report was generated, number of seconds since POSIX epoch.",
+      "description": "Timestamp of when this report was generated, number of seconds since the POSIX epoch.",
       "type": "number"
     },
     "detectedTags": {
@@ -19,7 +19,7 @@
         "type": "object",
         "properties": {
           "id": {
-            "description": "Uinque identifier of the BLE tag.",
+            "description": "Unique identifier of the BLE tag.",
             "type": "string"
           },
           "age": {
@@ -28,7 +28,7 @@
             "minimum": 0
           },
           "rssi": {
-            "description": "Received signal strength indicator, no unit.",
+            "description": "Received signal strength indicator.",
             "type": "number"
           }
         },
@@ -40,7 +40,7 @@
       }
     },
     "batteryLevel": {
-      "description": "Battery level of the gateway in % if available.",
+      "description": "Battery level of the gateway in percent if available.",
       "type": "number",
       "minimum": 0,
       "maximum": 100
