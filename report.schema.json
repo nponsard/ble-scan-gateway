@@ -28,8 +28,10 @@
             "minimum": 0
           },
           "rssi": {
-            "description": "Received signal strength indicator.",
-            "type": "number"
+            "description": "Received signal strength indicator in dBm, higher value means more power.",
+            "type": "number",
+            "minimum": -127,
+            "maximum": 127
           }
         },
         "required": [
