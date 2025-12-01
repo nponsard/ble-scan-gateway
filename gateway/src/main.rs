@@ -3,6 +3,8 @@
 mod pins;
 mod sensors;
 
+use core::str::FromStr;
+
 use ariel_os::{
     asynch::Spawner,
     config::str_from_env,
@@ -15,26 +17,27 @@ use ariel_os::{
     uart::Baudrate,
 };
 use ariel_os_gnss_time_extension::GnssTimeExt as _;
-use common_types::{AddressesSeen, GatewayUpdate, Location, MAX_SEEN};
+use common_types::{AddressesSeen, DetectedTag, GatewayUpdate, Location, MAX_SEEN};
 use embassy_net::{
     dns::DnsSocket,
     tcp::client::{TcpClient, TcpClientState},
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 use embedded_io_async::BufRead;
-use heapless::{FnvIndexMap, Vec};
+use heapless::{FnvIndexMap, String, Vec};
 use reqwless::{
     client::HttpClient,
     headers::ContentType,
     request::{Method, RequestBuilder},
 };
 
-use crate::{
-    pins::{GnssStatusPeripherals, UartPeripherals, UpdatePeripherals},
-    sensors::NRF91_GNSS,
-};
+use crate::pins::{GnssStatusPeripherals, UartPeripherals, UpdatePeripherals};
 
-type SeenMap = FnvIndexMap<[u8; 6], Instant, MAX_SEEN>;
+bind_interrupts!(struct Irqs {
+    SERIAL3 => uarte::InterruptHandler<SERIAL3>;
+});
+
+type SeenMap = FnvIndexMap<String<64>, Instant, MAX_SEEN>;
 static SEEN: Mutex<CriticalSectionRawMutex, SeenMap> = Mutex::new(FnvIndexMap::new());
 
 static CURRENT_LOCATION: Mutex<CriticalSectionRawMutex, Option<Location>> = Mutex::new(None);
@@ -123,10 +126,10 @@ async fn uart_receive(peripherals: UartPeripherals) {
                     debug!("Decoded packet");
                     let mut seen = SEEN.lock().await;
                     for addr in decoded.addrs {
-                        if seen.insert(addr, instant).is_err() {
+                        if seen.insert(addr.id.clone(), instant).is_err() {
                             warn!("Seen list full, removing oldest entry to insert new one");
                             remove_oldest_entry(&mut seen);
-                            if seen.insert(addr, instant).is_err() {
+                            if seen.insert(addr.id, instant).is_err() {
                                 error!("Failed to insert address after removing oldest entry");
                             }
                         };
@@ -175,7 +178,12 @@ async fn update_location(peripherals: GnssStatusPeripherals) {
                 altitude: 0.0,
                 latitude: 0.0,
                 longitude: 0.0,
-                timestamp: 0,
+                time_of_fix: 0,
+
+                // TODO: populate these values
+                heading: 0.0,
+                horizontal_speed: 0.0,
+                vertical_spedd: 0.0,
             };
             let mut found_altitude = false;
             let mut found_latitude = false;
@@ -183,7 +191,7 @@ async fn update_location(peripherals: GnssStatusPeripherals) {
 
             let found_timestamp = match samples.time_of_fix_timestamp() {
                 Ok(t) => {
-                    location.timestamp = t as u64;
+                    location.time_of_fix = t as u64;
                     true
                 }
                 Err(e) => {
@@ -271,11 +279,28 @@ async fn send_updates(peripherals: UpdatePeripherals) {
         info!("Sending update...");
         let location = { *CURRENT_LOCATION.lock().await };
         debug!("Getting seen list");
-        let seen_snapshot = { SEEN.lock().await.keys().cloned().collect() };
+        let seen_snapshot: Vec<String<64>, 32> = { SEEN.lock().await.keys().cloned().collect() };
+
+        // TODO : get the age and rssi of devices
+        let detected_tags = seen_snapshot
+            .iter()
+            .map(|k| DetectedTag {
+                age: 0,
+                id: k.clone(),
+                rssi: 0,
+            })
+            .collect();
 
         let update = GatewayUpdate {
             location,
-            seen: seen_snapshot,
+            detected_tags,
+
+            // TODO: get battery level
+            battery_level: None,
+            // TODO: configure gateway id
+            gateway_id: String::from_str("test").unwrap(),
+            // TODO: get time
+            timestamp: 0,
         };
         match serde_json::to_vec(&update) {
             Ok(json) => {

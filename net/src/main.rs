@@ -1,13 +1,15 @@
 #![no_main]
 #![no_std]
 
+extern crate alloc;
 mod pins;
 
-use core::cell::Cell;
+use core::{cell::Cell, str::FromStr};
 
+use alloc::format;
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
-use heapless::{FnvIndexMap, Vec};
+use heapless::{FnvIndexMap, String, Vec};
 use postcard::{
     ser_flavors::{Cobs, Slice},
     serialize_with_flavor,
@@ -20,13 +22,13 @@ use trouble_host::{
 };
 
 use ariel_os::{
-    debug::log::{info, trace, warn},
+    debug::log::{Hex, info, trace, warn},
     time::{Duration, Instant, Timer},
 };
 
 use embedded_io_async::Write;
 
-use common_types::{AddressesSeen, MAX_SEEN};
+use common_types::{AddressesSeen, DetectedTag, MAX_SEEN};
 
 #[cfg(context = "nrf5340dk-net")]
 use embassy_nrf::peripherals::SERIAL0;
@@ -86,15 +88,29 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
     loop {
         Timer::after_secs(2).await;
         info!("Sending scan data...");
-        let seen: Vec<_, 128> = {
+        let seen: Vec<_, 32> = {
             SEEN.lock(|cell| {
                 let seen = cell.take();
                 seen.keys().cloned().collect()
             })
         };
+
+        let addresses_seen: Vec<DetectedTag, 32> = seen
+            .iter()
+            .map(|addr| DetectedTag {
+                age: 0,
+                rssi: 0,
+                // TODO: do not use alloc here and use the advertisement data instead
+                id: heapless::String::from_str(&format!("{:?}", addr))
+                    .expect("Shouldn't be longer than 64 characters"),
+            })
+            .collect();
+
         let buffer = &mut [0u8; 1024];
         let data = serialize_with_flavor::<AddressesSeen, Cobs<Slice>, &mut [u8]>(
-            &AddressesSeen::from(seen),
+            &AddressesSeen {
+                addrs: addresses_seen,
+            },
             Cobs::try_new(Slice::new(buffer)).unwrap(),
         );
 
@@ -118,12 +134,12 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
 }
 
 /// Remove entries older than 10 minutes
-fn remove_old_entries(seen: &mut FnvIndexMap<BdAddr, Instant, 128>) {
+fn remove_old_entries(seen: &mut FnvIndexMap<BdAddr, Instant, 32>) {
     let now = Instant::now();
     seen.retain(|_, &mut instant| now.duration_since(instant) < Duration::from_secs(600));
 }
 
-fn remove_oldest_entry(seen: &mut FnvIndexMap<BdAddr, Instant, 128>) {
+fn remove_oldest_entry(seen: &mut FnvIndexMap<BdAddr, Instant, 32>) {
     if let Some((oldest_key, _)) = seen.iter().min_by_key(|&(_, &v)| v) {
         seen.remove(&oldest_key.clone());
     }
