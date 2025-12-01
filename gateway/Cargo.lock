@@ -149,6 +149,7 @@ dependencies = [
  "embassy-stm32",
  "embassy-sync 0.6.2",
  "embassy-time",
+ "embassy-time-queue-utils",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "embedded-io",
@@ -189,6 +190,16 @@ dependencies = [
  "once_cell",
  "paste",
  "static_cell",
+]
+
+[[package]]
+name = "ariel-os-gnss-time-extension"
+version = "0.1.0"
+dependencies = [
+ "ariel-os-debug",
+ "ariel-os-sensors",
+ "defmt 1.0.1",
+ "time",
 ]
 
 [[package]]
@@ -265,10 +276,13 @@ name = "ariel-os-nrf91-gnss"
 version = "0.1.0"
 dependencies = [
  "ariel-os-debug",
+ "ariel-os-gnss-time-extension",
  "ariel-os-sensors",
+ "ariel-os-sensors-utils",
  "defmt 1.0.1",
  "embassy-sync 0.6.2",
  "futures",
+ "libm",
  "nrf-modem",
  "portable-atomic",
  "time",
@@ -323,6 +337,16 @@ dependencies = [
  "embassy-sync 0.6.2",
  "linkme",
  "pin-project",
+]
+
+[[package]]
+name = "ariel-os-sensors-utils"
+version = "0.1.0"
+dependencies = [
+ "ariel-os-sensors",
+ "embassy-sync 0.6.2",
+ "embassy-time",
+ "portable-atomic",
 ]
 
 [[package]]
@@ -530,6 +554,7 @@ version = "0.1.0"
 dependencies = [
  "ariel-os",
  "ariel-os-boards",
+ "ariel-os-gnss-time-extension",
  "ariel-os-nrf91-gnss",
  "common-types",
  "embassy-futures",
@@ -1487,6 +1512,7 @@ dependencies = [
  "esp32",
  "esp32c3",
  "esp32c6",
+ "esp32s2",
  "esp32s3",
  "fugit",
  "instability",
@@ -1600,6 +1626,16 @@ name = "esp32c6"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd38a7771b65cb640cc4a79324a6301ba4ac3bf2987caca5d3aa34492238fdb9"
+dependencies = [
+ "critical-section",
+ "vcell",
+]
+
+[[package]]
+name = "esp32s2"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0eb30ae371e72436629a70affedd1e3570829f16a3b718d6ec96508791d9da5e"
 dependencies = [
  "critical-section",
  "vcell",
@@ -2080,6 +2116,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "libm"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
+
+[[package]]
 name = "linked_list_allocator"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2206,7 +2248,7 @@ checksum = "aa07b0722c63805057dec824444fdc814bdfd30d1c782a3a8f63bbcf67c4ed1c"
 [[package]]
 name = "nrf-modem"
 version = "0.7.3"
-source = "git+https://github.com/diondokter/nrf-modem?rev=deec4cc8a207ee96b4fd06463f57437fafd51030#deec4cc8a207ee96b4fd06463f57437fafd51030"
+source = "git+https://github.com/diondokter/nrf-modem.git?rev=154f661f60b7a613f445d6a1ab2b47d3af9e71ba#154f661f60b7a613f445d6a1ab2b47d3af9e71ba"
 dependencies = [
  "arrayvec",
  "at-commands",
@@ -3584,8 +3626,3 @@ source = "git+https://github.com/ariel-os/esp-hal?rev=aa8d1995fc06eb5e6d04a2022e
 name = "esp-wifi"
 version = "0.12.0"
 source = "git+https://github.com/ariel-os/esp-hal?rev=aa8d1995fc06eb5e6d04a2022ecf3679b4929e63#aa8d1995fc06eb5e6d04a2022ecf3679b4929e63"
-
-[[patch.unused]]
-name = "try-lock"
-version = "0.2.5"
-source = "git+https://github.com/seanmonstar/try-lock?rev=45c39685b56a4dba1b71bdbbbe5f731c3c77dc50#45c39685b56a4dba1b71bdbbbe5f731c3c77dc50"

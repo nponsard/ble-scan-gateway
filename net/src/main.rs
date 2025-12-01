@@ -3,8 +3,11 @@
 
 mod pins;
 
+use core::cell::Cell;
+
 use embassy_futures::join::join;
-use heapless::FnvIndexMap;
+use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
+use heapless::{FnvIndexMap, Vec};
 use postcard::{
     ser_flavors::{Cobs, Slice},
     serialize_with_flavor,
@@ -18,7 +21,6 @@ use trouble_host::{
 
 use ariel_os::{
     debug::log::{info, trace, warn},
-    thread::sync::Mutex,
     time::{Duration, Instant, Timer},
 };
 
@@ -34,7 +36,8 @@ use embassy_nrf::peripherals::UARTE0;
 use embassy_nrf::peripherals::UARTE0;
 use embassy_nrf::{bind_interrupts, uarte};
 
-static SEEN: Mutex<FnvIndexMap<BdAddr, Instant, MAX_SEEN>> = Mutex::new(FnvIndexMap::new());
+static SEEN: Mutex<CriticalSectionRawMutex, Cell<FnvIndexMap<BdAddr, Instant, MAX_SEEN>>> =
+    Mutex::new(Cell::new(FnvIndexMap::new()));
 
 #[cfg(context = "nrf5340dk-net")]
 bind_interrupts!(struct Irqs {
@@ -57,8 +60,11 @@ async fn automatic_cleanup() {
         Timer::after_secs(30).await;
         // Remove entries older than 10 minutes
         {
-            let mut seen = SEEN.lock();
-            remove_old_entries(&mut seen);
+            SEEN.lock(|cell| {
+                let mut seen = cell.take();
+                remove_old_entries(&mut seen);
+                cell.set(seen);
+            });
         }
     }
 }
@@ -77,15 +83,14 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
         config,
     );
 
-
     loop {
         Timer::after_secs(2).await;
         info!("Sending scan data...");
-        let seen = {
-            let mut seen = SEEN.lock();
-            let v: heapless::Vec<BdAddr, MAX_SEEN> = seen.keys().cloned().collect();
-            seen.clear();
-            v
+        let seen: Vec<_, 128> = {
+            SEEN.lock(|cell| {
+                let seen = cell.take();
+                seen.keys().cloned().collect()
+            })
         };
         let buffer = &mut [0u8; 1024];
         let data = serialize_with_flavor::<AddressesSeen, Cobs<Slice>, &mut [u8]>(
@@ -158,22 +163,26 @@ struct DiscorveryHandler {}
 
 impl EventHandler for DiscorveryHandler {
     fn on_adv_reports(&self, mut it: LeAdvReportsIter<'_>) {
-        let mut seen = SEEN.lock();
-        while let Some(Ok(report)) = it.next() {
-            if !seen.contains_key(&report.addr) {
-                trace!("discovered: {:?}", report.addr);
-                // force cleanup if we have too many entries
-                if seen.len() >= MAX_SEEN {
-                    remove_old_entries(&mut seen);
-                    // if we still have too many entries, remove the oldest one
+        SEEN.lock(|cell| {
+            let mut seen = cell.take();
+            while let Some(Ok(report)) = it.next() {
+                if !seen.contains_key(&report.addr) {
+                    trace!("discovered: {:?}", report.addr);
+                    // force cleanup if we have too many entries
                     if seen.len() >= MAX_SEEN {
-                        warn!("too many seen entries, removing oldest");
-                        remove_oldest_entry(&mut seen);
+                        remove_old_entries(&mut seen);
+                        // if we still have too many entries, remove the oldest one
+                        if seen.len() >= MAX_SEEN {
+                            warn!("too many seen entries, removing oldest");
+                            remove_oldest_entry(&mut seen);
+                        }
                     }
                 }
+                // Update / insert the address with the current time
+                let _ = seen.insert(report.addr, Instant::now());
             }
-            // Update / insert the address with the current time
-            let _ = seen.insert(report.addr, Instant::now());
-        }
+
+            cell.set(seen);
+        });
     }
 }

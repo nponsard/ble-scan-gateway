@@ -4,8 +4,8 @@ mod pins;
 mod sensors;
 
 use ariel_os::{
-    config::str_from_env,
     asynch::Spawner,
+    config::str_from_env,
     debug::log::{debug, error, info, warn},
     gpio::{Input, Level, Output, Pull},
     net,
@@ -13,7 +13,7 @@ use ariel_os::{
     sensors::{Label, Reading, Sensor},
     time::{Duration, Instant, Timer},
 };
-use ariel_os_nrf91_gnss::Nrf91GnssExt;
+use ariel_os_gnss_time_extension::GnssTimeExt as _;
 use common_types::{AddressesSeen, GatewayUpdate, Location, MAX_SEEN};
 use embassy_net::{
     dns::DnsSocket,
@@ -178,7 +178,7 @@ async fn update_location(peripherals: GnssStatusPeripherals) {
             let mut found_latitude = false;
             let mut found_longitude = false;
 
-            let found_timestamp = match samples.time_of_fix() {
+            let found_timestamp = match samples.time_of_fix_timestamp() {
                 Ok(t) => {
                     location.timestamp = t as u64;
                     true
@@ -189,7 +189,7 @@ async fn update_location(peripherals: GnssStatusPeripherals) {
                 }
             };
 
-            for (sample, channel) in samples.samples().zip(NRF91_GNSS.reading_channels().iter()) {
+            for (channel, sample) in samples.samples() {
                 match channel.label() {
                     Label::Altitude => {
                         if let Ok(value) = sample.value() {
