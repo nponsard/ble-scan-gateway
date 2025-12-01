@@ -12,3 +12,4 @@ apps:
       - nrf52840dk
     selects:
       - ble-central
+      - alloc
