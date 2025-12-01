@@ -17,6 +17,9 @@ ariel-os-boards = { path = "build/imports/ariel-os/src/ariel-os-boards" }
 ariel-os-nrf91-gnss = { path = "build/imports/ariel-os/src/ariel-os-nrf91-gnss", features = [
   "defmt",
 ] }
+ariel-os-gnss-time-extension = { path = "build/imports/ariel-os/src/ariel-os-gnss-time-extension", features = [
+  "defmt",
+] }
 embassy-futures = { version = "0.1.1" }
 heapless = { version = "0.8", features = ["serde"] }
 reqwless = { version = "0.13.0", default-features = true, features = [
