@@ -25,6 +25,8 @@ heapless = { version = "0.8", features = ["serde"] }
 reqwless = { version = "0.13.0", default-features = true, features = [
   "embedded-tls",
 ] }
+const-str = { version = "0.7.0" }
+
 rand_core = "0.6.4"
 serde_json = { version = "1.0.145", default-features = false, features = [
   "alloc",

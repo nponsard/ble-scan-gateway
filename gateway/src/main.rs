@@ -26,7 +26,7 @@ use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 use embedded_io_async::BufRead;
 use heapless::{FnvIndexMap, String, Vec};
 use reqwless::{
-    client::HttpClient,
+    client::{HttpClient, TlsConfig, TlsVerify},
     headers::ContentType,
     request::{Method, RequestBuilder},
 };
@@ -48,6 +48,13 @@ const ENDPOINT_URL: &str = str_from_env!(
     "BACKEND_ENDPOINT",
     "Backend endpoint URL, including protocol, host, port and path"
 );
+
+const BEARER_TOKEN: &str = str_from_env!(
+    "BEARER_TOKEN",
+    "Bearer token set in the Authorization header"
+);
+
+const AUTHORIZATION_HEADER: &str = const_str::concat!("Bearer ", BEARER_TOKEN);
 
 const TCP_BUFFER_SIZE: usize = 1024;
 const HTTP_BUFFER_SIZE: usize = 1024;
@@ -242,11 +249,20 @@ async fn update_location(peripherals: GnssStatusPeripherals) {
 
 #[ariel_os::task(autostart, peripherals)]
 async fn send_updates(peripherals: UpdatePeripherals) {
+    // RFC8449: TLS 1.3 encrypted records are limited to 16 KiB + 256 bytes.
+    const MAX_ENCRYPTED_TLS_13_RECORD_SIZE: usize = 16640;
+    // Required by `embedded_tls::TlsConnection::new()`.
+    const TLS_READ_BUFFER_SIZE: usize = MAX_ENCRYPTED_TLS_13_RECORD_SIZE;
+    // Can be smaller than the read buffer (could be adjusted: trade-off between memory usage and not
+    // splitting large writes into multiple records).
+    const TLS_WRITE_BUFFER_SIZE: usize = 4096;
     let mut led = Output::new(peripherals.led_green, Level::Low);
     let mut btn1 = Input::builder(peripherals.btn1, Pull::Up)
         .build_with_interrupt()
         .unwrap();
     let mut last_update = Instant::now();
+    let mut tls_rx_buffer = [0; TLS_READ_BUFFER_SIZE];
+    let mut tls_tx_buffer = [0; TLS_WRITE_BUFFER_SIZE];
 
     let stack = net::network_stack().await.unwrap();
 
@@ -254,8 +270,15 @@ async fn send_updates(peripherals: UpdatePeripherals) {
         TcpClientState::<MAX_CONCURRENT_CONNECTIONS, TCP_BUFFER_SIZE, TCP_BUFFER_SIZE>::new();
     let tcp_client = TcpClient::new(stack, &tcp_client_state);
     let dns_client = DnsSocket::new(stack);
+    let tls_verify = TlsVerify::None;
 
-    let mut client = HttpClient::new(&tcp_client, &dns_client);
+    // WANRING: THIS NEEDS TO BE REPLACED WITH A RANDOMLY GENERATED VALUE
+
+    let tls_seed = 38485;
+
+    let tls_config = TlsConfig::new(tls_seed, &mut tls_rx_buffer, &mut tls_tx_buffer, tls_verify);
+
+    let mut client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
 
     //   unsafe {
     //     nrfxlib_sys::nrf_modem_gnss_prio_mode_enable();
@@ -304,7 +327,9 @@ async fn send_updates(peripherals: UpdatePeripherals) {
         };
         match serde_json::to_vec(&update) {
             Ok(json) => {
-                if let Err(e) = send_http_post_request(&mut client, ENDPOINT_URL, &json).await {
+                if let Err(e) =
+                    send_authenticated_http_post_request(&mut client, ENDPOINT_URL, &json).await
+                {
                     warn!(
                         "Failed to send HTTP POST request: {:?}",
                         defmt::Debug2Format(&e)
@@ -322,7 +347,7 @@ async fn send_updates(peripherals: UpdatePeripherals) {
     }
 }
 
-async fn send_http_post_request(
+async fn send_authenticated_http_post_request(
     client: &mut HttpClient<'_, TcpClient<'_, MAX_CONCURRENT_CONNECTIONS>, DnsSocket<'_>>,
     url: &str,
     content: &[u8],
@@ -336,7 +361,8 @@ async fn send_http_post_request(
     > = client.request(Method::POST, url).await?;
     let mut handle = handle
         .body(content)
-        .content_type(ContentType::ApplicationJson);
+        .content_type(ContentType::ApplicationJson)
+        .headers(&[("Authoriazion", AUTHORIZATION_HEADER)]);
     let response = handle.send(&mut http_rx_buf).await?;
 
     info!("Response status: {}", response.status.0);
