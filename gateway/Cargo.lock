@@ -557,6 +557,7 @@ dependencies = [
  "ariel-os-gnss-time-extension",
  "ariel-os-nrf91-gnss",
  "common-types",
+ "const-str",
  "embassy-futures",
  "embassy-nrf",
  "embassy-sync 0.6.2",
