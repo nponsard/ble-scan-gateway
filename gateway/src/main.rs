@@ -16,7 +16,7 @@ use ariel_os::{
     time::{Duration, Instant, Timer},
     uart::Baudrate,
 };
-use ariel_os_gnss_time_extension::GnssTimeExt as _;
+use ariel_os_sensors_gnss_time_ext::GnssTimeExt as _;
 use common_types::{AddressesSeen, DetectedTag, GatewayUpdate, Location, MAX_SEEN};
 use embassy_net::{
     dns::DnsSocket,
@@ -32,10 +32,6 @@ use reqwless::{
 };
 
 use crate::pins::{GnssStatusPeripherals, UartPeripherals, UpdatePeripherals};
-
-bind_interrupts!(struct Irqs {
-    SERIAL3 => uarte::InterruptHandler<SERIAL3>;
-});
 
 type SeenMap = FnvIndexMap<String<64>, Instant, MAX_SEEN>;
 static SEEN: Mutex<CriticalSectionRawMutex, SeenMap> = Mutex::new(FnvIndexMap::new());
@@ -160,7 +156,7 @@ async fn update_location(peripherals: GnssStatusPeripherals) {
     let mut led_red = Output::new(peripherals.led_red, Level::Low);
     led_red.set_high();
 
-    let spawner = Spawner::for_current_executor().await;
+    let spawner = unsafe { Spawner::for_current_executor().await };
     unsafe {
         nrfxlib_sys::nrf_modem_gnss_prio_mode_enable();
     }

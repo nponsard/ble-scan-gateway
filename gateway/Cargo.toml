@@ -14,10 +14,10 @@ ariel-os = { path = "build/imports/ariel-os/src/ariel-os", features = [
   "external-interrupts",
 ] }
 ariel-os-boards = { path = "build/imports/ariel-os/src/ariel-os-boards" }
-ariel-os-nrf91-gnss = { path = "build/imports/ariel-os/src/ariel-os-nrf91-gnss", features = [
+ariel-os-nrf91-gnss = { path = "build/imports/ariel-os/src/sensors/ariel-os-nrf91-gnss", features = [
   "defmt",
 ] }
-ariel-os-gnss-time-extension = { path = "build/imports/ariel-os/src/ariel-os-gnss-time-extension", features = [
+ariel-os-sensors-gnss-time-ext = { path = "build/imports/ariel-os/src/ariel-os-sensors-gnss-time-ext", features = [
   "defmt",
 ] }
 embassy-futures = { version = "0.1.1" }
@@ -32,12 +32,12 @@ serde_json = { version = "1.0.145", default-features = false, features = [
   "alloc",
 ] }
 common-types = { path = "../common-types" }
-linkme = { version = "0.3.32" }
-embedded-io-async = "0.6.1"
+linkme = { version = "0.3.35" }
+embedded-io-async = "=0.6.1"
 postcard = { version = "1.1.3", features = ["use-defmt"] }
 
-embassy-sync = { version = "0.6.2" }
-embassy-nrf = { version = "0.3.1" }
+embassy-sync = { version = "0.7.2" }
+embassy-nrf = { version = "0.8.0" }
 
 nrfxlib-sys = "=2.9.2"
 [lints.rust]

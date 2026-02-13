@@ -9,7 +9,7 @@ use core::{cell::Cell, str::FromStr};
 use alloc::format;
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
-use heapless::{FnvIndexMap, String, Vec};
+use heapless::{Vec, index_map::FnvIndexMap};
 use postcard::{
     ser_flavors::{Cobs, Slice},
     serialize_with_flavor,
@@ -22,7 +22,7 @@ use trouble_host::{
 };
 
 use ariel_os::{
-    debug::log::{Hex, info, trace, warn},
+    debug::log::{info, trace, warn},
     time::{Duration, Instant, Timer},
 };
 
@@ -30,7 +30,7 @@ use embedded_io_async::Write;
 
 use common_types::{AddressesSeen, DetectedTag, MAX_SEEN};
 
-#[cfg(context = "nrf5340dk-net")]
+#[cfg(context = "nrf5340-net")]
 use embassy_nrf::peripherals::SERIAL0;
 #[cfg(context = "nrf52dk")]
 use embassy_nrf::peripherals::UARTE0;
@@ -41,7 +41,7 @@ use embassy_nrf::{bind_interrupts, uarte};
 static SEEN: Mutex<CriticalSectionRawMutex, Cell<FnvIndexMap<BdAddr, Instant, MAX_SEEN>>> =
     Mutex::new(Cell::new(FnvIndexMap::new()));
 
-#[cfg(context = "nrf5340dk-net")]
+#[cfg(context = "nrf5340-net")]
 bind_interrupts!(struct Irqs {
     SERIAL0 => uarte::InterruptHandler<SERIAL0>;
 });
@@ -79,23 +79,23 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
 
     let mut uart = uarte::Uarte::new(
         peripherals.serial,
-        Irqs,
         peripherals.uart_rx,
         peripherals.uart_tx,
+        Irqs,
         config,
     );
 
     loop {
         Timer::after_secs(2).await;
         info!("Sending scan data...");
-        let seen: Vec<_, 32> = {
+        let seen: Vec<_, MAX_SEEN> = {
             SEEN.lock(|cell| {
                 let seen = cell.take();
                 seen.keys().cloned().collect()
             })
         };
 
-        let addresses_seen: Vec<DetectedTag, 32> = seen
+        let addresses_seen: Vec<DetectedTag, MAX_SEEN> = seen
             .iter()
             .map(|addr| DetectedTag {
                 age: 0,
@@ -106,7 +106,7 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
             })
             .collect();
 
-        let buffer = &mut [0u8; 1024];
+        let buffer = &mut [0u8; 4096];
         let data = serialize_with_flavor::<AddressesSeen, Cobs<Slice>, &mut [u8]>(
             &AddressesSeen {
                 addrs: addresses_seen,
@@ -134,12 +134,12 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
 }
 
 /// Remove entries older than 10 minutes
-fn remove_old_entries(seen: &mut FnvIndexMap<BdAddr, Instant, 32>) {
+fn remove_old_entries(seen: &mut FnvIndexMap<BdAddr, Instant, MAX_SEEN>) {
     let now = Instant::now();
     seen.retain(|_, &mut instant| now.duration_since(instant) < Duration::from_secs(600));
 }
 
-fn remove_oldest_entry(seen: &mut FnvIndexMap<BdAddr, Instant, 32>) {
+fn remove_oldest_entry(seen: &mut FnvIndexMap<BdAddr, Instant, MAX_SEEN>) {
     if let Some((oldest_key, _)) = seen.iter().min_by_key(|&(_, &v)| v) {
         seen.remove(&oldest_key.clone());
     }

@@ -1,7 +1,7 @@
 imports:
   - git:
       url: https://github.com/ariel-os/ariel-os
-      commit: a15c26a507daf4aeca78962fdb93c4129c6daee5
+      tag: v0.3.0
     dldir: ariel-os
 
 apps:
@@ -10,6 +10,7 @@ apps:
       - nrf5340dk-net
       - nrf52dk
       - nrf52840dk
+      - nordic-thingy-91-x-nrf5340-net
     selects:
       - ble-central
       - alloc
