@@ -3,57 +3,40 @@
 mod pins;
 mod sensors;
 
-use core::str::FromStr;
+use core::{cell::RefCell, str::FromStr};
+
+use coap_handler::Attribute;
+use coap_handler_implementations::{GetRenderable, TypeHandler, wkc::ConstantSingleRecordReport};
+use coap_request::Stack;
+use embassy_sync::{
+    blocking_mutex::{self, raw::CriticalSectionRawMutex},
+    mutex::Mutex,
+};
+use embedded_io_async::BufRead;
+use heapless::{String, Vec, index_map::FnvIndexMap};
 
 use ariel_os::{
     asynch::Spawner,
-    config::str_from_env,
-    debug::log::{debug, error, info, warn},
+    debug::log::{Debug2Format, debug, error, info, warn},
     gpio::{Input, Level, Output, Pull},
-    hal, net,
-    reexports::embassy_net,
+    hal,
     sensors::{Label, Reading, Sensor},
     time::{Duration, Instant, Timer},
     uart::Baudrate,
 };
 use ariel_os_sensors_gnss_time_ext::GnssTimeExt as _;
+
 use common_types::{AddressesSeen, DetectedTag, GatewayUpdate, Location, MAX_SEEN};
-use embassy_net::{
-    dns::DnsSocket,
-    tcp::client::{TcpClient, TcpClientState},
-};
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
-use embedded_io_async::BufRead;
-use heapless::{FnvIndexMap, String, Vec};
-use reqwless::{
-    client::{HttpClient, TlsConfig, TlsVerify},
-    headers::ContentType,
-    request::{Method, RequestBuilder},
-};
 
 use crate::pins::{GnssStatusPeripherals, UartPeripherals, UpdatePeripherals};
 
 type SeenMap = FnvIndexMap<String<64>, Instant, MAX_SEEN>;
-static SEEN: Mutex<CriticalSectionRawMutex, SeenMap> = Mutex::new(FnvIndexMap::new());
 
+static SEEN: Mutex<CriticalSectionRawMutex, SeenMap> = Mutex::new(FnvIndexMap::new());
 static CURRENT_LOCATION: Mutex<CriticalSectionRawMutex, Option<Location>> = Mutex::new(None);
 
-const MAX_CONCURRENT_CONNECTIONS: usize = 2;
-
-const ENDPOINT_URL: &str = str_from_env!(
-    "BACKEND_ENDPOINT",
-    "Backend endpoint URL, including protocol, host, port and path"
-);
-
-const BEARER_TOKEN: &str = str_from_env!(
-    "BEARER_TOKEN",
-    "Bearer token set in the Authorization header"
-);
-
-const AUTHORIZATION_HEADER: &str = const_str::concat!("Bearer ", BEARER_TOKEN);
-
-const TCP_BUFFER_SIZE: usize = 1024;
-const HTTP_BUFFER_SIZE: usize = 1024;
+static LAST_UPDATE: blocking_mutex::Mutex<CriticalSectionRawMutex, RefCell<Option<GatewayUpdate>>> =
+    blocking_mutex::Mutex::new(RefCell::new(None));
 
 /// Remove entries older than 10 minutes
 fn remove_old_entries(seen: &mut SeenMap) {
@@ -97,7 +80,7 @@ async fn uart_receive(peripherals: UartPeripherals) {
         config,
     )
     .expect("Invalid UART configuration");
-    let mut packet_buffer: Vec<u8, 2048> = Vec::new();
+    let mut packet_buffer: Vec<u8, 8192> = Vec::new();
 
     loop {
         debug!("Waiting for UART data...");
@@ -113,7 +96,7 @@ async fn uart_receive(peripherals: UartPeripherals) {
         debug!("Read {} bytes from UART", size_read);
         let err = packet_buffer.extend_from_slice(read);
         if let Err(e) = err {
-            warn!("Packet buffer full, dropping data: {:?}", e);
+            warn!("Packet buffer full, dropping data: {:?}", Debug2Format(&e));
             packet_buffer.clear();
             continue;
         }
@@ -244,41 +227,13 @@ async fn update_location(peripherals: GnssStatusPeripherals) {
 }
 
 #[ariel_os::task(autostart, peripherals)]
-async fn send_updates(peripherals: UpdatePeripherals) {
-    // RFC8449: TLS 1.3 encrypted records are limited to 16 KiB + 256 bytes.
-    const MAX_ENCRYPTED_TLS_13_RECORD_SIZE: usize = 16640;
-    // Required by `embedded_tls::TlsConnection::new()`.
-    const TLS_READ_BUFFER_SIZE: usize = MAX_ENCRYPTED_TLS_13_RECORD_SIZE;
-    // Can be smaller than the read buffer (could be adjusted: trade-off between memory usage and not
-    // splitting large writes into multiple records).
-    const TLS_WRITE_BUFFER_SIZE: usize = 4096;
+async fn updates(peripherals: UpdatePeripherals) {
     let mut led = Output::new(peripherals.led_green, Level::Low);
     let mut btn1 = Input::builder(peripherals.btn1, Pull::Up)
         .build_with_interrupt()
         .unwrap();
     let mut last_update = Instant::now();
-    let mut tls_rx_buffer = [0; TLS_READ_BUFFER_SIZE];
-    let mut tls_tx_buffer = [0; TLS_WRITE_BUFFER_SIZE];
 
-    let stack = net::network_stack().await.unwrap();
-
-    let tcp_client_state =
-        TcpClientState::<MAX_CONCURRENT_CONNECTIONS, TCP_BUFFER_SIZE, TCP_BUFFER_SIZE>::new();
-    let tcp_client = TcpClient::new(stack, &tcp_client_state);
-    let dns_client = DnsSocket::new(stack);
-    let tls_verify = TlsVerify::None;
-
-    // WANRING: THIS NEEDS TO BE REPLACED WITH A RANDOMLY GENERATED VALUE
-
-    let tls_seed = 38485;
-
-    let tls_config = TlsConfig::new(tls_seed, &mut tls_rx_buffer, &mut tls_tx_buffer, tls_verify);
-
-    let mut client = HttpClient::new_with_tls(&tcp_client, &dns_client, tls_config);
-
-    //   unsafe {
-    //     nrfxlib_sys::nrf_modem_gnss_prio_mode_enable();
-    // }
     loop {
         // Wait for the button being pressed or 60s, whichever comes first.
         info!("Waiting 60s before sending next update...");
@@ -321,61 +276,88 @@ async fn send_updates(peripherals: UpdatePeripherals) {
             // TODO: get time
             timestamp: 0,
         };
-        match serde_json::to_vec(&update) {
-            Ok(json) => {
-                if let Err(e) =
-                    send_authenticated_http_post_request(&mut client, ENDPOINT_URL, &json).await
-                {
-                    warn!(
-                        "Failed to send HTTP POST request: {:?}",
-                        defmt::Debug2Format(&e)
-                    );
-                }
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to serialize update to JSON: {:?}",
-                    defmt::Debug2Format(&e)
-                );
-            }
-        }
+
+        // replace the last update
+        let _ = LAST_UPDATE.lock(|s| s.borrow_mut().replace(update));
+
+        // match serde_json::to_vec(&update) {
+        //     Ok(json) => {
+
+        //     }
+        //     Err(e) => {
+        //         warn!(
+        //             "Failed to serialize update to JSON: {:?}",
+        //             defmt::Debug2Format(&e)
+        //         );
+        //     }
+        // }
         last_update = Instant::now();
     }
 }
 
-async fn send_authenticated_http_post_request(
-    client: &mut HttpClient<'_, TcpClient<'_, MAX_CONCURRENT_CONNECTIONS>, DnsSocket<'_>>,
-    url: &str,
-    content: &[u8],
-) -> Result<(), reqwless::Error> {
-    let mut http_rx_buf = [0; HTTP_BUFFER_SIZE];
+#[ariel_os::task(autostart)]
+async fn register_to_rd() {
+    let client = ariel_os::coap::coap_client().await;
 
-    let handle: reqwless::client::HttpRequestHandle<
-        '_,
-        embassy_net::tcp::client::TcpConnection<'_, 2, 1024, 1024>,
-        (),
-    > = client.request(Method::POST, url).await?;
-    let mut handle = handle
-        .body(content)
-        .content_type(ContentType::ApplicationJson)
-        .headers(&[("Authoriazion", AUTHORIZATION_HEADER)]);
-    let response = handle.send(&mut http_rx_buf).await?;
+    // Corresponding to the fixed network setup, we select a fixed server address; this may need to
+    // be updated on hosts that are configured differently.
+    let addr = "65.108.193.50:4230"; // IPv4 🔔
+    let demoserver = addr.parse().unwrap();
 
-    info!("Response status: {}", response.status.0);
+    loop {
+        info!("Sending POST to {}...", demoserver);
+        let request = coap_request_implementations::Code::post()
+            .with_path("/rd")
+            .with_request_payload_slice(b"This is Ariel OS")
+            .processing_response_payload_through(|p| {
+                info!(
+                    "RD response is {:?}",
+                    core::str::from_utf8(p).map_err(|_| "not Unicode?")
+                );
+            });
+        let response = client.to(demoserver).request(request).await;
+        info!("Response {:?}", response.map_err(|_| "TransportError"));
 
-    if let Some(ref content_type) = response.content_type {
-        info!("Response Content-Type: {}", content_type.as_str());
+        Timer::after_secs(60).await
     }
+}
 
-    if let Ok(body) = response.body().read_to_end().await {
-        if let Ok(body) = core::str::from_utf8(body) {
-            info!("Response body:\n{}", body);
-        } else {
-            info!("Received a response body, but it is not valid UTF-8");
-        }
-    } else {
-        info!("No response body");
+#[ariel_os::task(autostart)]
+async fn coap_run() {
+    use coap_handler_implementations::{HandlerBuilder, SimpleRendered, new_dispatcher};
+
+    let handler = new_dispatcher()
+        // We offer a single resource: /hello, which responds just with a text string.
+        .at(&["hello"], SimpleRendered("Hello from Ariel OS"))
+        .at(
+            &["status"],
+            ConstantSingleRecordReport::new(
+                TypeHandler::new_minicbor_2(coap_handler_implementations::with_get(
+                    StatusRenderer::new(),
+                )),
+                &[Attribute::Title("Gateway Status")],
+            ),
+        );
+
+    ariel_os::coap::coap_run(handler).await;
+}
+
+struct StatusRenderer {}
+
+impl StatusRenderer {
+    pub fn new() -> StatusRenderer {
+        StatusRenderer {}
     }
+}
 
-    Ok(())
+impl GetRenderable for StatusRenderer {
+    type Get = GatewayUpdate;
+    fn get(&mut self) -> Result<Self::Get, coap_message_utils::Error> {
+        info!("GET /status");
+
+        LAST_UPDATE
+            .lock(|s| s.clone())
+            .into_inner()
+            .ok_or(coap_message_utils::Error::service_unavailable())
+    }
 }

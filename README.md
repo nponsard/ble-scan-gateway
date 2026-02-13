@@ -40,18 +40,20 @@ It is responsible for aggregating the information and sending it to the server.
 - A first task reads the UART (VCOM1) channel, decodes and stores the BLE devices listed by the nRF5340, a timestamp is attached to each address to record when it was last seen.
 - The second task deletes addresses that have a timestamp older than 10 minutes. This removes devices that havent been detected for too long (out of range).
 - A third task fetches the new position (latitude, longitude and altitude) reported by the GNSS sensor (new value approximately every second). If the position returned is valid it will be saved in a shared variable as the last know position.
-- The last task sets up LTE-M networking and sends updates to the server every 60 seconds or when the button is pressed. The update is a `POST` request to the endpoint configured in `ENDPOINT_URL`, the body is the JSON serialization of `common_types::GatewayUpdate`, it contains the last known location and the list of devices that have been detected.
+- The fourth task sets up LTE-M networking and registers the device to the CoAP resource directory server.
+- Finally a task handles the CoAP requests.
 
 ### The server
 
-The server is run on the host PC and listens on all interfaces (for convenience) on port 4230, once it receives a POST request on `/mac`, the body of the request is decoded and printed to the console.
+In `coap-server` is an example of simple "Resource Directory" where the devices can register themselves to. This server will then use the NAT port mapping created by the initial request of the gateway to send requests to it. This "server" will then send requests to the gateway to query its current status.
 
-This server port has to be reachable by the developement kit's LTE-M network connection, the easiest is to have the port of the server exposed to the internet.
+The communication is encrypted using `OSCORE` and `EDHOC` is used to establish and exchange the keys. The gateway verifies the authenticity of the server as it knows its public key, but the server cannot yet verify the authenticity of the gateway.
 
 ### Extras
 
 - `common-types` contains the types that are sent through communication channels (UART, networking) and so are used in two programs.
 - `reader` is a test application that reads the data sent through `UART` from the `net` application.
+- `coap-tests` is used to test coap connection without having to use the Thingy:91 X and cellular network.
 
 ## Setup
 
@@ -134,8 +136,10 @@ F6:47:47:E4:22:6B
 There is an RGB led on the Thingy91X, for now each color (red, green, blue) is used as individual LEDs to represent the status of different components.
 
 - Red: first GNSS fix hasn't been acquired yet (location unknown)
+<!-- 
 - Blue: last data returned by the GNSS module was a valid location (updates every second)
 - Green: sending update to the server using LTE-M.
+ -->
 
 Since those 3 colors are in the same package, two concurrent statuses can make different colors.
 
