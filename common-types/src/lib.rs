@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::vec::Vec;
 
 pub const MAX_SEEN: usize = 32;
+pub const TAG_NAME_MAX_LEN: usize = 64;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AddressesSeen {
@@ -44,7 +45,7 @@ pub struct Location {
 #[cfg_attr(feature = "minicbor", derive(Decode, Encode))]
 pub struct DetectedTag {
     #[cfg_attr(feature = "minicbor", cbor(n(0), with = "minicbor_adapters"))]
-    pub id: heapless::String<64>,
+    pub id: heapless::String<TAG_NAME_MAX_LEN>,
     #[cfg_attr(feature = "minicbor", n(1))]
     pub age: u16,
     #[cfg_attr(feature = "minicbor", n(2))]
@@ -61,7 +62,7 @@ pub struct GatewayUpdate {
     #[cfg(not(feature = "std"))]
     #[serde(rename = "gatewayId")]
     #[cfg_attr(feature = "minicbor", cbor(n(0), with = "minicbor_adapters"))]
-    pub gateway_id: heapless::String<64>,
+    pub gateway_id: heapless::String<TAG_NAME_MAX_LEN>,
     #[cfg_attr(feature = "minicbor", n(1))]
     pub timestamp: i64,
 

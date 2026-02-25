@@ -1,15 +1,13 @@
 #![no_main]
 #![no_std]
 
-extern crate alloc;
 mod pins;
 
 use core::{cell::Cell, str::FromStr};
 
-use alloc::format;
 use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
-use heapless::{Vec, index_map::FnvIndexMap};
+use heapless::{String, Vec, index_map::FnvIndexMap};
 use postcard::{
     ser_flavors::{Cobs, Slice},
     serialize_with_flavor,
@@ -17,18 +15,19 @@ use postcard::{
 use trouble_host::{
     Host,
     connection::{PhySet, ScanConfig},
-    prelude::{BdAddr, EventHandler, LeAdvReportsIter},
+    prelude::{AdStructure, EventHandler, LeAdvReportsIter},
     scan::Scanner,
 };
 
 use ariel_os::{
-    debug::log::{info, trace, warn},
+    config::str_from_env_or,
+    debug::log::{Debug2Format, info, trace, warn},
     time::{Duration, Instant, Timer},
 };
 
 use embedded_io_async::Write;
 
-use common_types::{AddressesSeen, DetectedTag, MAX_SEEN};
+use common_types::{AddressesSeen, DetectedTag, MAX_SEEN, TAG_NAME_MAX_LEN};
 
 #[cfg(context = "nrf5340-net")]
 use embassy_nrf::peripherals::SERIAL0;
@@ -38,8 +37,16 @@ use embassy_nrf::peripherals::UARTE0;
 use embassy_nrf::peripherals::UARTE0;
 use embassy_nrf::{bind_interrupts, uarte};
 
-static SEEN: Mutex<CriticalSectionRawMutex, Cell<FnvIndexMap<BdAddr, Instant, MAX_SEEN>>> =
+type TagStorageMap = FnvIndexMap<String<TAG_NAME_MAX_LEN>, (Instant, i8), MAX_SEEN>;
+
+static SEEN: Mutex<CriticalSectionRawMutex, Cell<TagStorageMap>> =
     Mutex::new(Cell::new(FnvIndexMap::new()));
+
+const PREFIX: &str = str_from_env_or!(
+    "TAG_PREFIX",
+    "Ariel",
+    "Filter out all BLE devices that don't have this prefix in their name"
+);
 
 #[cfg(context = "nrf5340-net")]
 bind_interrupts!(struct Irqs {
@@ -88,21 +95,16 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
     loop {
         Timer::after_secs(2).await;
         info!("Sending scan data...");
-        let seen: Vec<_, MAX_SEEN> = {
-            SEEN.lock(|cell| {
-                let seen = cell.take();
-                seen.keys().cloned().collect()
-            })
-        };
+        let seen = { SEEN.lock(|cell| cell.take()) };
+
+        let now = Instant::now();
 
         let addresses_seen: Vec<DetectedTag, MAX_SEEN> = seen
             .iter()
-            .map(|addr| DetectedTag {
-                age: 0,
-                rssi: 0,
-                // TODO: do not use alloc here and use the advertisement data instead
-                id: heapless::String::from_str(&format!("{:?}", addr))
-                    .expect("Shouldn't be longer than 64 characters"),
+            .map(|(id, (instant, rssi))| DetectedTag {
+                age: u16::try_from(now.duration_since(*instant).as_secs()).unwrap_or(u16::MAX),
+                rssi: *rssi,
+                id: id.clone(),
             })
             .collect();
 
@@ -134,12 +136,12 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
 }
 
 /// Remove entries older than 10 minutes
-fn remove_old_entries(seen: &mut FnvIndexMap<BdAddr, Instant, MAX_SEEN>) {
+fn remove_old_entries(seen: &mut TagStorageMap) {
     let now = Instant::now();
-    seen.retain(|_, &mut instant| now.duration_since(instant) < Duration::from_secs(600));
+    seen.retain(|_, &mut (instant, _)| now.duration_since(instant) < Duration::from_secs(600));
 }
 
-fn remove_oldest_entry(seen: &mut FnvIndexMap<BdAddr, Instant, MAX_SEEN>) {
+fn remove_oldest_entry(seen: &mut TagStorageMap) {
     if let Some((oldest_key, _)) = seen.iter().min_by_key(|&(_, &v)| v) {
         seen.remove(&oldest_key.clone());
     }
@@ -182,20 +184,58 @@ impl EventHandler for DiscorveryHandler {
         SEEN.lock(|cell| {
             let mut seen = cell.take();
             while let Some(Ok(report)) = it.next() {
-                if !seen.contains_key(&report.addr) {
-                    trace!("discovered: {:?}", report.addr);
-                    // force cleanup if we have too many entries
-                    if seen.len() >= MAX_SEEN {
-                        remove_old_entries(&mut seen);
-                        // if we still have too many entries, remove the oldest one
-                        if seen.len() >= MAX_SEEN {
-                            warn!("too many seen entries, removing oldest");
-                            remove_oldest_entry(&mut seen);
+                let adv_data = AdStructure::decode(report.data);
+
+                let name = {
+                    let mut decoded = None;
+                    for adv in adv_data {
+                        match adv {
+                            Ok(AdStructure::CompleteLocalName(data)) => {
+                                decoded = str::from_utf8(data).ok();
+
+                                if decoded.is_none() {
+                                    warn!("failed to decode name");
+                                }
+
+                                break;
+                            }
+
+                            Ok(adv) => {
+                                trace!("unknown advertisement {:?}", adv);
+                            }
+                            Err(e) => {
+                                trace!("error decoding advertisement: {:?}", e);
+                            }
+                        }
+                    }
+                    decoded
+                };
+
+                if let Some(str_name) = name
+                    && str_name.starts_with(PREFIX)
+                {
+                    match String::from_str(str_name) {
+                        Ok(name) => {
+                            if !seen.contains_key(&name) {
+                                trace!("discovered: {}", name.as_str());
+                                // force cleanup if we have too many entries
+                                if seen.len() >= MAX_SEEN {
+                                    remove_old_entries(&mut seen);
+                                    // if we still have too many entries, remove the oldest one
+                                    if seen.len() >= MAX_SEEN {
+                                        warn!("too many seen entries, removing oldest");
+                                        remove_oldest_entry(&mut seen);
+                                    }
+                                }
+                            }
+                            // Update / insert the address with the current time
+                            let _ = seen.insert(name, (Instant::now(), report.rssi));
+                        }
+                        Err(e) => {
+                            warn!("BLE name too long: {:?} ", Debug2Format(&e));
                         }
                     }
                 }
-                // Update / insert the address with the current time
-                let _ = seen.insert(report.addr, Instant::now());
             }
 
             cell.set(seen);
