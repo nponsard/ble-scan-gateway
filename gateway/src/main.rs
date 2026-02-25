@@ -27,7 +27,7 @@ use ariel_os::{
 };
 use ariel_os_sensors_gnss_time_ext::GnssTimeExt as _;
 
-use common_types::{TagsSeen, DetectedTag, GatewayUpdate, Location, TAG_NAME_MAX_LEN};
+use common_types::{DetectedTag, GatewayUpdate, Location, TAG_NAME_MAX_LEN, TagsSeen};
 
 use crate::pins::{GnssStatusPeripherals, UartPeripherals, UpdatePeripherals};
 
@@ -112,8 +112,6 @@ async fn update_location(peripherals: GnssStatusPeripherals) {
         nrfxlib_sys::nrf_modem_gnss_prio_mode_enable();
     }
 
-    // let res = nrf_modem::send_at::<0>(r#"AT+CPSMS=1,"","","00101000","00001000""#).await;
-    // debug!("AT+CPSMS=1 result: {:?}", defmt::Debug2Format(&res));
     sensors::NRF91_GNSS
         .init(ariel_os_nrf91_gnss::config::Config::default())
         .await;
@@ -158,6 +156,7 @@ async fn update_location(peripherals: GnssStatusPeripherals) {
                 match channel.label() {
                     Label::Altitude => {
                         if let Ok(value) = sample.value() {
+                            debug!("altitude: {}", value);
                             location.altitude =
                                 value as f32 / 10i32.pow((-channel.scaling()) as u32) as f32;
                             found_altitude = true;
@@ -211,7 +210,7 @@ async fn updates(peripherals: UpdatePeripherals) {
         info!("Waiting 60s before sending next update...");
 
         led.set_low();
-        let _ = embassy_futures::select::select(btn1.wait_for_low(), Timer::after_secs(60)).await;
+        let _ = embassy_futures::select::select(btn1.wait_for_low(), Timer::after_secs(360)).await;
         led.set_high();
         // Prevent sending updates too frequently
         if last_update_timestamp.elapsed() < Duration::from_secs(10) {
@@ -238,15 +237,16 @@ async fn updates(peripherals: UpdatePeripherals) {
             })
             .collect();
 
+        // Backend forces to have values instead of undefined, so we send possibly wrong data.
         let update = GatewayUpdate {
             location,
             detected_tags,
-            // TODO: get battery level
-            battery_level: None,
+            // FIXME: get battery level
+            battery_level: Some(100),
             // You may want to use another form of ID
             gateway_id: device_id.clone(),
-            // TODO: get time
-            timestamp: 0,
+            // FIXME: track time instead of relying on the last GPS update
+            timestamp: location.map(|l| l.time_of_fix).unwrap_or(0),
         };
 
         // replace the last update

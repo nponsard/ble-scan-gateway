@@ -64,7 +64,7 @@ pub struct GatewayUpdate {
     #[cfg_attr(feature = "minicbor", cbor(n(0), with = "minicbor_adapters"))]
     pub gateway_id: heapless::String<TAG_NAME_MAX_LEN>,
     #[cfg_attr(feature = "minicbor", n(1))]
-    pub timestamp: i64,
+    pub timestamp: u64,
 
     #[cfg(feature = "std")]
     #[serde(rename = "detectedTags")]
