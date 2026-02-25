@@ -7,6 +7,8 @@
 #   "lakers-python >= 0.6.0,",
 #   "cryptography >= 46.0.0, < 47.0",
 #   "filelock >= 3.24.0, < 4.0",
+#   "python-dotenv >= 1.2.0, < 2.0",
+#   "aiohttp >= 3.10.0, < 4.0",
 # ]
 # ///
 """
@@ -18,6 +20,12 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Any
+import os
+from dotenv import load_dotenv
+
+
+import json
+import aiohttp
 
 import cbor2
 import aiocoap
@@ -29,6 +37,11 @@ from aiocoap.numbers.codes import Code
 
 servers: set[str] = set()
 
+load_dotenv()
+
+BACKEND_ENDPOINT = os.getenv("BACKEND_ENDPOINT")
+BEARER_TOKEN = os.getenv("BEARER_TOKEN")
+
 
 # minicbor doesn't set names to fields, we have to manually restore them
 def convert_gateway_update(cbor: list):
@@ -39,9 +52,13 @@ def convert_gateway_update(cbor: list):
     out["detected_tags"] = convert_detected_tags(cbor[2])
     if len(cbor) >= 4:
         out["batteryLevel"] = cbor[3]
+    else:
+        out["batteryLevel"] = None
     if len(cbor) >= 5:
         out["location"] = convert_location(cbor[4])
-    return out 
+    else:
+        out["location"] = None
+    return out
 
 
 def convert_detected_tags(cbor: list):
@@ -76,13 +93,24 @@ class Register(Resource):
     async def render_post(self, request):
         _text = request.payload.decode("utf8")
 
-        print("adding device:", request.remote.uri_base)
-        servers.add(request.remote.uri_base)
+        remote = request.remote.uri_base
+        print("received ping from device:", remote)
+        servers.add(remote)
+
+        try:
+            await process_update(remote)
+        except Exception as e:
+            print("Error when processing update:", e)
+            return aiocoap.Message(
+                content_format=0,
+                payload=b"Internal Server Error",
+                code=Code.INTERNAL_SERVER_ERROR,
+            )
 
         return aiocoap.Message(content_format=0, payload=b"OK")
 
 
-background_tasks = set()
+# background_tasks = set()
 context = None
 
 server_credentials_file = Path("server.diag")
@@ -101,9 +129,9 @@ except ImportError:
 
 async def main():
     global context
-    task = asyncio.create_task(loop())
-    background_tasks.add(task)
-    task.add_done_callback(background_tasks.discard)
+    # task = asyncio.create_task(loop())
+    # background_tasks.add(task)
+    # task.add_done_callback(background_tasks.discard)
 
     server_credentials = CredentialsMap()
 
@@ -128,33 +156,50 @@ async def main():
     await asyncio.get_running_loop().create_future()
 
 
-async def loop():
+async def process_update(server: str):
     global context
-    import json
+    if context is None:
+        print("Error: uninitialized context")
+        return
+    print("sending request to server ", server)
 
-    while True:
-        await asyncio.sleep(70)
+    msg = Message(code=GET, uri=server + "/status")
+    result = await context.request(msg).response
 
-        print("Getting update from servers: ")
-        for s in servers:
-            print("sending request to server ", s)
-            msg = Message(code=GET, uri=s + "/hello")
-            result = await context.request(msg).response
-            print("received hello:", result)
+    print("received result: ", result)
+    if result.code == Code.CONTENT:
+        decoded = cbor2.loads(result.payload)
+        print("cbor data:", decoded)
+        body = convert_gateway_update(decoded)
+        print("received result: ", json.dumps(body, indent=4))
 
-            msg = Message(code=GET, uri=s + "/status")
-            result = await context.request(msg).response
+        if BEARER_TOKEN is not None and BACKEND_ENDPOINT is not None:
+            bearer = "Bearer " + BEARER_TOKEN
+            headers = {"Authorization": bearer}
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.post(
+                    BACKEND_ENDPOINT,
+                    json=body,
+                ) as response:
+                    print("result: ", response.status, await response.text())
+        else:
+            print(
+                "Cannot send request to backend: BEARER_TOKEN and BACKEND_ENDPOINT need to be set"
+            )
 
-            print("received result: ", result)
-            if result.code == Code.CONTENT:
-                decoded = cbor2.loads(result.payload)
-                print(decoded)
-                print(
-                    "received result: ",
-                    json.dumps(convert_gateway_update(decoded), indent=4),
-                )
-            else:
-                print("Got error code: ", result.code)
+    else:
+        print("Got error code: ", result.code)
+
+
+# async def loop():
+#     global context
+
+#     while True:
+#         await asyncio.sleep(70)
+
+#         print("Getting update from servers: ")
+#         for s in servers:
+#             process_update(s)
 
 
 if __name__ == "__main__":
