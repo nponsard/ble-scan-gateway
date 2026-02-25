@@ -12,11 +12,11 @@ pub const MAX_SEEN: usize = 32;
 pub const TAG_NAME_MAX_LEN: usize = 64;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AddressesSeen {
+pub struct TagsSeen {
     #[cfg(feature = "std")]
-    pub addrs: Vec<DetectedTag>,
+    pub tags: Vec<DetectedTag>,
     #[cfg(not(feature = "std"))]
-    pub addrs: Vec<DetectedTag, MAX_SEEN>,
+    pub tags: Vec<DetectedTag, MAX_SEEN>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

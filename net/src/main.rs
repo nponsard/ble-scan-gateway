@@ -27,7 +27,7 @@ use ariel_os::{
 
 use embedded_io_async::Write;
 
-use common_types::{AddressesSeen, DetectedTag, MAX_SEEN, TAG_NAME_MAX_LEN};
+use common_types::{DetectedTag, MAX_SEEN, TAG_NAME_MAX_LEN, TagsSeen};
 
 #[cfg(context = "nrf5340-net")]
 use embassy_nrf::peripherals::SERIAL0;
@@ -95,11 +95,17 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
     loop {
         Timer::after_secs(2).await;
         info!("Sending scan data...");
-        let seen = { SEEN.lock(|cell| cell.take()) };
+        let seen = {
+            SEEN.lock(|cell| {
+                let t = cell.take();
+                cell.set(t.clone());
+                t
+            })
+        };
 
         let now = Instant::now();
 
-        let addresses_seen: Vec<DetectedTag, MAX_SEEN> = seen
+        let tags: Vec<DetectedTag, MAX_SEEN> = seen
             .iter()
             .map(|(id, (instant, rssi))| DetectedTag {
                 age: u16::try_from(now.duration_since(*instant).as_secs()).unwrap_or(u16::MAX),
@@ -109,10 +115,8 @@ async fn send_scan_data(peripherals: pins::Peripherals) {
             .collect();
 
         let buffer = &mut [0u8; 4096];
-        let data = serialize_with_flavor::<AddressesSeen, Cobs<Slice>, &mut [u8]>(
-            &AddressesSeen {
-                addrs: addresses_seen,
-            },
+        let data = serialize_with_flavor::<TagsSeen, Cobs<Slice>, &mut [u8]>(
+            &TagsSeen { tags },
             Cobs::try_new(Slice::new(buffer)).unwrap(),
         );
 

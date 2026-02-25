@@ -3,7 +3,7 @@
 mod pins;
 mod sensors;
 
-use core::{cell::RefCell, str::FromStr};
+use core::{cell::RefCell, str::FromStr as _};
 
 use coap_handler::Attribute;
 use coap_handler_implementations::{GetRenderable, TypeHandler, wkc::ConstantSingleRecordReport};
@@ -13,11 +13,12 @@ use embassy_sync::{
     mutex::Mutex,
 };
 use embedded_io_async::BufRead;
-use heapless::{String, Vec, index_map::FnvIndexMap};
+use heapless::{String, Vec};
 
 use ariel_os::{
     asynch::Spawner,
-    debug::log::{Debug2Format, debug, error, info, warn},
+    config::str_from_env,
+    debug::log::{Debug2Format, Hex, debug, error, info, warn},
     gpio::{Input, Level, Output, Pull},
     hal,
     sensors::{Label, Reading, Sensor},
@@ -26,43 +27,19 @@ use ariel_os::{
 };
 use ariel_os_sensors_gnss_time_ext::GnssTimeExt as _;
 
-use common_types::{AddressesSeen, DetectedTag, GatewayUpdate, Location, MAX_SEEN};
+use common_types::{TagsSeen, DetectedTag, GatewayUpdate, Location, TAG_NAME_MAX_LEN};
 
 use crate::pins::{GnssStatusPeripherals, UartPeripherals, UpdatePeripherals};
 
-type SeenMap = FnvIndexMap<String<64>, Instant, MAX_SEEN>;
+// Test server : 65.108.193.50:4230
+const COAP_ENDPOINT: &str = str_from_env!("COAP_ENDPOINT", "The CoAP endpoint to connect to.");
 
-static SEEN: Mutex<CriticalSectionRawMutex, SeenMap> = Mutex::new(FnvIndexMap::new());
+static SEEN: Mutex<CriticalSectionRawMutex, (TagsSeen, Instant)> =
+    Mutex::new((TagsSeen { tags: Vec::new() }, Instant::from_ticks(0)));
 static CURRENT_LOCATION: Mutex<CriticalSectionRawMutex, Option<Location>> = Mutex::new(None);
 
 static LAST_UPDATE: blocking_mutex::Mutex<CriticalSectionRawMutex, RefCell<Option<GatewayUpdate>>> =
     blocking_mutex::Mutex::new(RefCell::new(None));
-
-/// Remove entries older than 10 minutes
-fn remove_old_entries(seen: &mut SeenMap) {
-    let now = Instant::now();
-    seen.retain(|_, &mut instant| now.duration_since(instant) < Duration::from_secs(600));
-}
-
-fn remove_oldest_entry(seen: &mut SeenMap) {
-    if let Some((oldest_key, _)) = seen.iter().min_by_key(|&(_, &v)| v) {
-        seen.remove(&oldest_key.clone());
-    }
-}
-
-#[ariel_os::task(autostart)]
-async fn automatic_cleanup() {
-    loop {
-        Timer::after_secs(30).await;
-        // Remove entries older than 10 minutes
-        {
-            debug!("Cleaning up old entries in seen list");
-            let mut seen = SEEN.lock().await;
-            debug!("locked");
-            remove_old_entries(&mut seen);
-        }
-    }
-}
 
 #[ariel_os::task(autostart, peripherals)]
 async fn uart_receive(peripherals: UartPeripherals) {
@@ -103,23 +80,14 @@ async fn uart_receive(peripherals: UartPeripherals) {
         uart.consume(size_read);
 
         if let Some(separator) = packet_buffer.iter().position(|&b| b == 0x00) {
-            let instant = Instant::now();
             let packet = &mut packet_buffer[..separator];
             debug!("Received packet, trying to decode...");
 
-            match postcard::from_bytes_cobs::<AddressesSeen>(packet) {
+            match postcard::from_bytes_cobs::<TagsSeen>(packet) {
                 Ok(decoded) => {
                     debug!("Decoded packet");
                     let mut seen = SEEN.lock().await;
-                    for addr in decoded.addrs {
-                        if seen.insert(addr.id.clone(), instant).is_err() {
-                            warn!("Seen list full, removing oldest entry to insert new one");
-                            remove_oldest_entry(&mut seen);
-                            if seen.insert(addr.id, instant).is_err() {
-                                error!("Failed to insert address after removing oldest entry");
-                            }
-                        };
-                    }
+                    *seen = (decoded, Instant::now())
                 }
                 Err(e) => {
                     warn!("Failed to decode packet: {:?}", e);
@@ -228,98 +196,85 @@ async fn update_location(peripherals: GnssStatusPeripherals) {
 
 #[ariel_os::task(autostart, peripherals)]
 async fn updates(peripherals: UpdatePeripherals) {
+    let device_id: String<TAG_NAME_MAX_LEN> = ariel_os::identity::device_id_bytes()
+        .map(|slice| heapless::format!("{}", Hex(slice)).unwrap())
+        .unwrap_or(String::from_str("unknown").unwrap());
+
     let mut led = Output::new(peripherals.led_green, Level::Low);
     let mut btn1 = Input::builder(peripherals.btn1, Pull::Up)
         .build_with_interrupt()
         .unwrap();
-    let mut last_update = Instant::now();
+    let mut last_update_timestamp = Instant::now();
 
     loop {
         // Wait for the button being pressed or 60s, whichever comes first.
         info!("Waiting 60s before sending next update...");
-        // unsafe {
-        //     nrfxlib_sys::nrf_modem_gnss_prio_mode_enable();
-        // }
+
         led.set_low();
         let _ = embassy_futures::select::select(btn1.wait_for_low(), Timer::after_secs(60)).await;
         led.set_high();
-        // Timer::after_secs(60).await;
         // Prevent sending updates too frequently
-        if last_update.elapsed() < Duration::from_secs(10) {
+        if last_update_timestamp.elapsed() < Duration::from_secs(10) {
             warn!("Update skipped to avoid sending updates too frequently");
             continue;
         }
 
-        info!("Sending update...");
+        info!("Updating status...");
         let location = { *CURRENT_LOCATION.lock().await };
         debug!("Getting seen list");
-        let seen_snapshot: Vec<String<64>, 32> = { SEEN.lock().await.keys().cloned().collect() };
 
-        // TODO : get the age and rssi of devices
-        let detected_tags = seen_snapshot
+        let (addresses_seen, decode_instant) = { SEEN.lock().await.clone() };
+
+        let decode_age_secs =
+            u16::try_from(Instant::now().duration_since(decode_instant).as_secs())
+                .unwrap_or(u16::MAX);
+
+        let detected_tags = addresses_seen
+            .tags
             .iter()
-            .map(|k| DetectedTag {
-                age: 0,
-                id: k.clone(),
-                rssi: 0,
+            .map(|tag| DetectedTag {
+                age: tag.age + decode_age_secs,
+                ..tag.clone()
             })
             .collect();
 
         let update = GatewayUpdate {
             location,
             detected_tags,
-
             // TODO: get battery level
             battery_level: None,
-            // TODO: configure gateway id
-            gateway_id: String::from_str("test").unwrap(),
+            // You may want to use another form of ID
+            gateway_id: device_id.clone(),
             // TODO: get time
             timestamp: 0,
         };
 
         // replace the last update
         let _ = LAST_UPDATE.lock(|s| s.borrow_mut().replace(update));
+        last_update_timestamp = Instant::now();
 
-        // match serde_json::to_vec(&update) {
-        //     Ok(json) => {
-
-        //     }
-        //     Err(e) => {
-        //         warn!(
-        //             "Failed to serialize update to JSON: {:?}",
-        //             defmt::Debug2Format(&e)
-        //         );
-        //     }
-        // }
-        last_update = Instant::now();
+        // ping the RD
+        register_to_rd().await;
     }
 }
 
-#[ariel_os::task(autostart)]
 async fn register_to_rd() {
     let client = ariel_os::coap::coap_client().await;
 
-    // Corresponding to the fixed network setup, we select a fixed server address; this may need to
-    // be updated on hosts that are configured differently.
-    let addr = "65.108.193.50:4230"; // IPv4 🔔
-    let demoserver = addr.parse().unwrap();
+    let demoserver = COAP_ENDPOINT.parse().unwrap();
 
-    loop {
-        info!("Sending POST to {}...", demoserver);
-        let request = coap_request_implementations::Code::post()
-            .with_path("/rd")
-            .with_request_payload_slice(b"This is Ariel OS")
-            .processing_response_payload_through(|p| {
-                info!(
-                    "RD response is {:?}",
-                    core::str::from_utf8(p).map_err(|_| "not Unicode?")
-                );
-            });
-        let response = client.to(demoserver).request(request).await;
-        info!("Response {:?}", response.map_err(|_| "TransportError"));
-
-        Timer::after_secs(60).await
-    }
+    info!("Sending POST to {}...", demoserver);
+    let request = coap_request_implementations::Code::post()
+        .with_path("/rd")
+        .with_request_payload_slice(b"This is Ariel OS")
+        .processing_response_payload_through(|p| {
+            info!(
+                "RD response is {:?}",
+                core::str::from_utf8(p).map_err(|_| "not Unicode?")
+            );
+        });
+    let response = client.to(demoserver).request(request).await;
+    info!("Response {:?}", response.map_err(|_| "TransportError"));
 }
 
 #[ariel_os::task(autostart)]
@@ -327,8 +282,9 @@ async fn coap_run() {
     use coap_handler_implementations::{HandlerBuilder, SimpleRendered, new_dispatcher};
 
     let handler = new_dispatcher()
-        // We offer a single resource: /hello, which responds just with a text string.
+        // test route
         .at(&["hello"], SimpleRendered("Hello from Ariel OS"))
+        // the route that returns the status
         .at(
             &["status"],
             ConstantSingleRecordReport::new(
