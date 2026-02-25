@@ -17,6 +17,7 @@ be POSTed; the text is returned IN ALL CAPS.
 import asyncio
 import logging
 from pathlib import Path
+from typing import Any
 
 import cbor2
 import aiocoap
@@ -27,6 +28,48 @@ from aiocoap.oscore_sitewrapper import OscoreSiteWrapper
 from aiocoap.numbers.codes import Code
 
 servers: set[str] = set()
+
+
+# minicbor doesn't set names to fields, we have to manually restore them
+def convert_gateway_update(cbor: list):
+    out: dict[str, Any] = dict()
+
+    out["gatewayId"] = cbor[0]
+    out["timestamp"] = cbor[1]
+    out["detected_tags"] = convert_detected_tags(cbor[2])
+    if len(cbor) >= 4:
+        out["batteryLevel"] = cbor[3]
+    if len(cbor) >= 5:
+        out["location"] = convert_location(cbor[4])
+    return out 
+
+
+def convert_detected_tags(cbor: list):
+    out: list[dict[str, Any]] = []
+
+    for tag_cbor in cbor:
+        tag_out: dict[str, Any] = dict()
+        tag_out["id"] = tag_cbor[0]
+        tag_out["age"] = tag_cbor[1]
+        tag_out["rssi"] = tag_cbor[2]
+
+        out.append(tag_out)
+
+    return out
+
+
+def convert_location(cbor: list):
+    out: dict[str, float | int] = dict()
+
+    out["latitude"] = cbor[0]
+    out["longitude"] = cbor[1]
+    out["altitude"] = cbor[2]
+    out["heading"] = cbor[3]
+    out["horizontalSpeed"] = cbor[4]
+    out["verticalSpeed"] = cbor[5]
+    out["timeOfFix"] = cbor[6]
+
+    return out
 
 
 class Register(Resource):
@@ -108,10 +151,11 @@ async def loop():
                 print(decoded)
                 print(
                     "received result: ",
-                    json.dumps(decoded, indent=4),
+                    json.dumps(convert_gateway_update(decoded), indent=4),
                 )
             else:
                 print("Got error code: ", result.code)
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
