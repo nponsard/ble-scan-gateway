@@ -98,13 +98,15 @@ def convert_location(cbor: list):
 
 class Register(Resource):
     async def render_post(self, request):
-        _text = request.payload.decode("utf8")
 
+        # This represents the IP and port we can use to contact the device.
         remote = request.remote.uri_base
+
         print("received ping from device:", remote)
         servers.add(remote)
 
         try:
+            # directly request the update to the remote
             await process_update(remote)
         except Exception as e:
             print("Error when processing update:", e)
@@ -167,6 +169,8 @@ async def main():
 
 
 async def process_update(server: str):
+    # We have to use the server's context so we use the same UDP port and can go through the NAT.
+    # This uses the NAT the different routers have setup when the device did a request to this server. 
     global context
     if context is None:
         print("Error: uninitialized context")
@@ -201,7 +205,8 @@ async def process_update(server: str):
         print("Got error code: ", result.code)
 
 
-
+# This loop is not started. You can start it by uncommenting the few lines at the start of main()
+# It can be used to regularly query the device for it's status.
 async def loop():
     global context
 
