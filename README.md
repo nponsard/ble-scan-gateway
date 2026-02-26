@@ -64,27 +64,51 @@ It is responsible for aggregating the information and sending it to the server.
 
 ### The proxy
 
-In `coap-proxy` is an example of simple "Resource Directory" where the devices can register themselves to. This server will then use the NAT port mapping created by the initial request of the gateway to send requests to it. This proxy will then send requests to the gateway to query its current status.
+In `coap-proxy/` is an example of simple "Resource Directory" where the devices can register themselves to. This server will then use the NAT port mapping created by the initial request of the gateway to send requests to it. This proxy will then send requests to the gateway to query its current status.
+
+To allow for optimizations, this proxy will request the status of the gateway right after it sent a request to `/register`. This is inspired by the resource directory described in [RFC 9176](https://www.rfc-editor.org/rfc/rfc9176) but isn't compatible with it.
 
 The communication is encrypted using `OSCORE` and `EDHOC` is used to establish and exchange the keys. The gateway checks the authenticity of the server as it knows its public key, but the server cannot yet validate the authenticity of the gateway.
 
+### Common types
+
+`common-types/` contains the types that are sent through communication channels (UART, networking).
+
 ### Extras
 
-- `common-types` contains the types that are sent through communication channels (UART, networking) and so are used in two programs.
-- `reader` is a test application that reads the data sent through `UART` from the `net` application.
-- `coap-tests` is used to test coap connection without having to use the Thingy:91 X and cellular network.
+These extra directories contain tools to help debug the different parts of the system, they may not be up to date:
+
+- `reader/` is a test application that reads the data sent through `UART` from the `net` application.
+- `coap-tests/` is used to test coap connection without having to use the Thingy:91 X and cellular network.
 
 ## Setup
 
+As the only supported networking interface of the nRF9151 MCU is LTE-M, you need the proxy to be accessible through the internet and a SIM that allows LTE-M networking in your area.
+
 ### Proxy setup
 
-Follow the guide in [coap-proxy](coap-proxy/Readme.md)
+Follow the guide in [coap-proxy](coap-proxy/Readme.md).
 
 ### Flashing the Thingy:91 X
 
-We need to flash both cores of the nRF5340 and the nRF9151.
+You need to have the Rust toolchain, `laze` and `probe-rs` installed, follow the [Getting Started guide](https://ariel-os.github.io/ariel-os/dev/docs/book/getting-started.html) of Ariel OS.
 
-On the Thingy91X you will need to connect an external programmer through P8 or P9, provide power via the USB-C connector (J6), ensure the power switch (SW1) is in the "ON" position.
+**Hardware Needed**:
+
+- SWD cable | [Farnell](https://fr.farnell.com/multicomp-pro/mp009195/cordon-10v-idc-fem-fem-200mm/dp/3941770)
+- nRF52840-DK | [Farnell](https://fr.farnell.com/nordic-semiconductor/nrf52840-dk/kit-d-eval-bluetooth-low-energy/dp/2842321)
+- Thingy:91 X | [Farnell](https://fr.farnell.com/nordic-semiconductor/thingy91x/plateforme-prototyp-iot-arm-cortex/dp/4574822)
+- 1 USB (A or C) cable to USB micro-B male.
+- 1 USB (A or C) cable to USB-C male.
+
+Here we use the nRF52840-DK as a programmer.
+
+You may have to remove the shell of the Thingy:91 X.
+Connect on side of the SWD cable to the Thingy:91 X, port with the label P8 to the right of LED2, align the red wire to the "1" marking on the board.
+Connect the other side of the cable to the "Debug out" port of the nRF52840-DK.
+You can now connect to USB and turn on both the Thingy:91 X and nRF52840-DK and proceed to flashing.
+
+We need to flash both cores of the nRF5340 and the nRF9151.
 
 #### Network core
 
@@ -95,7 +119,7 @@ cd net
 laze build -b nrf5340dk-net run
 ```
 
-> If probe-rs complains about the core being locked up, add `-- --allow-erase-all` at the end of the command:
+> If probe-rs complains about the core being locked up, append `-- --allow-erase-all` to the command:
 >
 > ```sh
 > laze build -b nrf5340dk-net run -- --allow-erase-all
@@ -124,6 +148,15 @@ COAP_ENDPOINT=<endpoint> laze build -b nordic-thingy-91-x-nrf9151 run
 ```
 
 Replace `<endpoint>` with the IP and port of the CoAP proxy (ex: `1.2.3.4:4230`).
+
+> If you need to configure how to connect to the cellular network, you can use the following environment variables add build time (prepend them to the command, before `laze build`):
+>
+> - `CONFIG_CELLULAR_PDN_APN`: The access point name to connect to (e.g. "orange").
+> - `CONFIG_CELLULAR_PDN_AUTHENTICATION_PROTOCOL`: The protocol used to authenticate, must be one of `NONE`, `PAP`, or `CHAP` if provided. If `PAP` or `CHAP` is set, you need to set `CONFIG_CELLULAR_PDN_USERNAME` and `CONFIG_CELLULAR_PDN_PASSWORD`.
+> - `CONFIG_CELLULAR_PDN_USERNAME`: The username used to authenticate to the network.
+>   If this environment variable is set you also need to set `CONFIG_CELLULAR_PDN_PASSWORD`.
+> - `CONFIG_CELLULAR_PDN_PASSWORD`: The password used to authenticate to the network.
+> - `CONFIG_SIM_PIN`: The code to unlock the SIM.
 
 ## Usage
 
