@@ -76,7 +76,11 @@ The communication is encrypted using `OSCORE` and `EDHOC` is used to establish a
 
 ## Setup
 
-### Flashing
+### Proxy setup
+
+Follow the guide in [coap-proxy](coap-proxy/Readme.md)
+
+### Flashing the Thingy:91 X
 
 We need to flash both cores of the nRF5340 and the nRF9151.
 
@@ -108,13 +112,9 @@ cd app
 laze build -b nrf5340dk run
 ```
 
-### Proxy
-
-Follow the guide in [coap-proxy](coap-proxy/Readme.md)
-
 #### nRF9151
 
-You need to set the public key of the proxy you deployed during the previous step in `gateway/peers.yml` (field kccs).
+You need to set the public key of the proxy you deployed during the [Proxy setup step](#proxy-setup) in `gateway/peers.yml` (field kccs).
 
 Set the SWD switch (SW2) to the "nRF91" posistion.
 
