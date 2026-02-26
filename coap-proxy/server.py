@@ -41,6 +41,13 @@ load_dotenv()
 
 BACKEND_ENDPOINT = os.getenv("BACKEND_ENDPOINT")
 BEARER_TOKEN = os.getenv("BEARER_TOKEN")
+PORT = 5683
+
+env_port = os.getenv("PORT")
+
+
+if env_port is not None:
+    PORT = int(env_port)
 
 
 # minicbor doesn't set names to fields, we have to manually restore them
@@ -129,6 +136,9 @@ except ImportError:
 
 async def main():
     global context
+
+    # Code to start a task that regularly queries the gateway
+
     # task = asyncio.create_task(loop())
     # background_tasks.add(task)
     # task.add_done_callback(background_tasks.discard)
@@ -191,15 +201,16 @@ async def process_update(server: str):
         print("Got error code: ", result.code)
 
 
-# async def loop():
-#     global context
 
-#     while True:
-#         await asyncio.sleep(70)
+async def loop():
+    global context
 
-#         print("Getting update from servers: ")
-#         for s in servers:
-#             process_update(s)
+    while True:
+        await asyncio.sleep(70)
+
+        print("Getting update from servers: ")
+        for s in servers:
+            process_update(s)
 
 
 if __name__ == "__main__":
