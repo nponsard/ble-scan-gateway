@@ -1,8 +1,28 @@
-# BLE scan gateway
+# Mobile Asset Tracker
 
-This repository is a poof of concept showing how we can report the presence of BLE tags in the proximity of a MCU.
+This open source project contains multiple Ariel OS applications capable of being executed on the Nordic Thingy91: X prototyping platform. Combined, these functionalities constitute a miniature BLE sniffer prototype running on battery, reporting periodically its geographical position and the Bluetooth scan results using the cellular network.
 
-This version is using the Thingy91X development kit.
+More specifically, the features aggregated in this demonstrator include:
+
+- Scanning the nearby bluetooth devices,
+- Filtering the devices having a `CompleteLocalName` starting with a predetermine prefix,
+- Perform periodic GPS geolocation,
+- Periodically transmit the list of recently detected devices and the GPS position of the Thingy:91 X using the LTE-M network.
+- Using the encrypted CoAP protocol and CBOR encoding to secure and limit the amount of data sent on the LTE-M link.
+
+As an accompaniment, the code provides a sample application in Python executable on a computer, containing a proxy prototype that manages the CoAP exchange, CBOR decoding on the one hand, and the sending of the data in JSON format to a backend (HTTPS server) for data collection on the other.
+
+## Remarks / Future Work
+
+- The BLE scan is basic and could be improved (e.g. adding security, implementing the iBeacon standard, ...). This aspect could be addressed at a later stage.
+- The power consumption of the firmwares running on the Thingy:91 X is not optimized in the current state. This could be adressed in a second phase.
+- The battery level currently reported by the Thingy:91 X firmware is fake/mocked. This could be adressed in a second phase.
+- Timestamp: an improvement could be to not send any update about the scaned devices until a new GPS fix is obtained (and the corresponding timestamp).
+- Authentication: currently the gateway is not authenticated by the proxy, nor the backend. Adding this authentication could happen in a second phase.
+- Storage: an improvement could be to add a way to store an history of the measurements in the event the LTE-M network is not available.
+- Gateway identifier: for now it's a string representation of its MAC. This format could be improved.
+
+![High level schema of the project](assets/high-level-schema.svg)
 
 ## Firmware Architecture
 
@@ -11,7 +31,7 @@ graph TD;
     B(BLE scan) --> nRF5340;
     G(GNSS location) --> nRF9151;
     nRF5340-->|UART + Postcard| nRF9151;
-    nRF9151-->|LTE-M + CoAP| CoAP proxy;
+    nRF9151-->|LTE-M + CoAP| P(CoAP proxy);
 ```
 
 ### nRF5340 Network core
