@@ -13,7 +13,7 @@ Currently the gateway checks the authenticity of the proxy but the proxy does no
 
 pipx is needed to manage dependencies of the script. Follow the [installation guide](https://pipx.pypa.io/stable/installation/) for your platform.
 
-On debian/ubuntu you can do:
+On Debian/Ubuntu you can do:
 
 ```sh
 sudo apt update
@@ -31,9 +31,9 @@ You need to generate a keypair for setting up the secure connection between the 
 pipx run generate.py
 ```
 
-If you want to generate a new keypair, you first need to delete `server.cosekey`.
-
 The command will output a public key, put this key for `kccs` in `../gateway/peers.yml`.
+
+If you want to regenerate a keypair, you first need to delete `server.cosekey`.
 
 ### Authentification to the backend
 
